@@ -80,31 +80,38 @@ export class BackgroundPoller extends EventEmitter {
     this.inFlight = true;
     this.pollCount++;
     const startTime = Date.now();
-    const enabledKeys = this.config.keys.filter((k) => k.enabled !== false);
+    try {
+      const enabledKeys = this.config.keys.filter((k) => k.enabled !== false);
 
-    // 并发调用所有 key
-    const results = await Promise.allSettled(
-      enabledKeys.map((k) => this.pollOne(k))
-    );
+      // 并发调用所有 key
+      const results = await Promise.allSettled(
+        enabledKeys.map((k) => this.pollOne(k))
+      );
 
-    this.inFlight = false;
-    this.lastPollAt = new Date().toISOString();
-    this.lastPollOk = results.every((r) => r.status === 'fulfilled' && r.value.ok);
+      this.lastPollAt = new Date().toISOString();
+      this.lastPollOk = results.every((r) => r.status === 'fulfilled' && r.value.ok);
 
-    if (results.some((r) => r.status === 'rejected')) {
-      const errs = results
-        .filter((r) => r.status === 'rejected')
-        .map((r) => (r as PromiseRejectedResult).reason?.message || 'unknown');
-      this.emit('error', new Error(`Some keys failed: ${errs.join('; ')}`));
+      if (results.some((r) => r.status === 'rejected')) {
+        const errs = results
+          .filter((r) => r.status === 'rejected')
+          .map((r) => (r as PromiseRejectedResult).reason?.message || 'unknown');
+        this.emit('error', new Error(`Some keys failed: ${errs.join('; ')}`));
+      }
+
+      const elapsed = Date.now() - startTime;
+      if (elapsed > 5000) {
+        console.warn(`[poller] slow tick: ${elapsed}ms for ${enabledKeys.length} keys`);
+      }
+
+      this.emit('tick', this.lastPollAt);
+    } catch (e) {
+      // 任何未捕获异常都不能阻止 scheduleNext
+      console.error(`[poller] runOnce exception: ${(e as Error).message}`);
+    } finally {
+      this.inFlight = false;
+      // 不论成功失败都必须调度下一次（防死锁）
+      this.scheduleNext(this.config.poll_interval_seconds * 1000);
     }
-
-    const elapsed = Date.now() - startTime;
-    if (elapsed > 5000) {
-      console.warn(`[poller] slow tick: ${elapsed}ms for ${enabledKeys.length} keys`);
-    }
-
-    this.emit('tick', this.lastPollAt);
-    this.scheduleNext(this.config.poll_interval_seconds * 1000);
   }
 
   /** 轮询单个 key */

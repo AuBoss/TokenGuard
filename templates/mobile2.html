@@ -735,9 +735,10 @@
       if (idx >= 0) allKeysCache[idx] = simplified;
       else allKeysCache.push(simplified);
 
-      // 更新 allRecordsCache：追加（限制 history）
-      if (allRecordsCache.length > 5000) {
-        allRecordsCache = allRecordsCache.slice(-4500);
+      // 更新 allRecordsCache：追加（限制 history 在 20000 条以内）
+      // 24h × 60s × 8 records/轮 = 11520，所以 20000 足够覆盖 24h+
+      if (allRecordsCache.length > 20000) {
+        allRecordsCache = allRecordsCache.slice(-18000);
       }
       allRecordsCache.push({
         alias: record.alias,
