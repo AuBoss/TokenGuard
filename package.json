@@ -1,7 +1,7 @@
 {
   "name": "minimax-guard",
-  "version": "2.0.0",
-  "description": "Minimax token plan monitor — Node.js + TypeScript rewrite",
+  "version": "0.1.0",
+  "description": "Minimax token plan monitor — Node.js + TypeScript rewrite (v0.1.0, was Python/Flask in v0.0.0)",
   "type": "module",
   "main": "dist/index.js",
   "scripts": {
