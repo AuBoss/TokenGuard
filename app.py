@@ -1056,7 +1056,7 @@ MOBILE_HTML = """<!doctype html>
     @media (max-width: 720px) {
       .trend-box { grid-column: 1; grid-row: auto; }
     }
-    /* 单 alias 模式：cards 数 ≤ 2，trend-box 移到下一行占整行 */
+    /* 单 alias 模式：cards 数量自适应，trend-box 移到下一行占整行 */
     main.single-alias .trend-box {
       grid-column: 1 / -1;
       grid-row: auto;
@@ -1139,13 +1139,19 @@ MOBILE_HTML = """<!doctype html>
       if (!sel) return;
       selectedAlias = sel.value;
       saveSelectedAlias();
-      // 切换 main 的 single-alias class 决定 trend-box 位置
-      document.querySelector('main')?.classList.toggle(
-        'single-alias', selectedAlias !== '__all__');
+      const visKeys = visibleKeys();
+      const visCardCount = visKeys.reduce((n, k) =>
+        n + ((k.models && k.models.length) || (k.error ? 1 : 0)), 0);
+      const mainEl = document.querySelector('main');
+      if (mainEl) {
+        mainEl.classList.toggle('single-alias', visCardCount > 0 && visCardCount <= 2);
+        const cols = Math.min(visCardCount, 3);
+        mainEl.style.gridTemplateColumns = cols > 0 ? `repeat(${cols}, 1fr)` : 'repeat(3, 1fr)';
+      }
       // 立即用缓存数据重渲染（不重新请求 API）
       const diag = { record_count: lastHistCount, exists: true };
       rebuildChartFromCache(allRecordsCache);
-      renderCards(visibleKeys(), diag);
+      renderCards(visKeys, diag);
     }
     function visibleKeys() {
       if (selectedAlias === '__all__') return allKeysCache;
@@ -1232,8 +1238,15 @@ MOBILE_HTML = """<!doctype html>
         rebuildChartFromCache(allRecordsCache);
         // 切换 main 的 single-alias class（cards ≤ 2 时 trend-box 移到底部）
         const visKeys = visibleKeys();
-        document.querySelector('main')?.classList.toggle(
-          'single-alias', visKeys.length > 0 && visKeys.length <= 2);
+        const visCardCount = visKeys.reduce((n, k) =>
+          n + ((k.models && k.models.length) || (k.error ? 1 : 0)), 0);
+        const mainEl = document.querySelector('main');
+        if (mainEl) {
+          mainEl.classList.toggle('single-alias', visCardCount > 0 && visCardCount <= 2);
+          // 自适应列数：1 card → 1fr；2 cards → 2fr；3+ → 3fr
+          const cols = Math.min(visCardCount, 3);
+          mainEl.style.gridTemplateColumns = cols > 0 ? `repeat(${cols}, 1fr)` : 'repeat(3, 1fr)';
+        }
         // 再 renderCards（按当前 alias 过滤）
         renderCards(visKeys, diagResp);
         const total = [...lastSparkData.values()].reduce((a, v) => a + v.length, 0);
