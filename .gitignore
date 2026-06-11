@@ -1,0 +1,154 @@
+# ============================================================
+# MinimaxGuard .gitignore
+# 目的：保护敏感信息（API token、访问 key、用户数据）不入库
+# ============================================================
+
+# ---- 敏感配置：API token 绝不入库 ----
+# 主配置文件（含 Bearer token）
+config.json
+# 任何带 local / secrets / prod 标记的配置
+config.local.json
+config.secrets.json
+config.prod.json
+config.production.json
+*.local.json
+*secrets*.json
+*token*.json
+!requirements.txt
+!package.json
+
+# ---- 访问 key（32 字符 URL-safe）----
+data/access_key
+data/access_key.*
+access_key
+
+# ---- 运行时数据：监控历史 ----
+# 整目录（包含 usage.ndjson + access_key + 其他运行时产物）
+data/
+# 单独排除 .ndjson 数据文件
+*.ndjson
+*.log
+*.pid
+
+# ---- Python ----
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# ---- 虚拟环境 ----
+.venv/
+venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+.python-version
+
+# ---- 测试 / 覆盖率 ----
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
+coverage.xml
+*.cover
+.hypothesis/
+
+# ---- 编辑器 / IDE ----
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.project
+.pydevproject
+.settings/
+.factorypath
+nbproject/private/
+nbbuild/
+nbdist/
+.nb-gradle/
+
+# ---- 系统文件 ----
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+desktop.ini
+
+# ---- 日志 / 临时 ----
+*.log
+*.log.*
+*.tmp
+*.temp
+*.swp
+*.bak
+*.backup
+*.orig
+.cache/
+
+# ---- Node / 前端（如果未来加入）----
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnp.*
+.parcel-cache
+.next/
+.nuxt/
+.vite/
+dist/
+
+# ---- Jupyter ----
+.ipynb_checkpoints/
+profile_default/
+ipython_config.py
+
+# ---- Docker / 部署产物（不入库）----
+*.tar
+*.tar.gz
+*.zip
+*.tgz
+
+# ---- 密钥 / 证书（防御性）----
+*.pem
+*.key
+*.crt
+*.p12
+*.pfx
+.env
+.env.*
+!.env.example
+secrets/
+*.secret
+
+# ---- 备份文件 ----
+*.bak
+*.old
+*.orig
+*.rej
+
+# ---- 数据快照（按月归档）----
+data/usage-*.ndjson
