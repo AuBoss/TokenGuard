@@ -1,0 +1,760 @@
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <title>MinimaxGuard</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="theme-color" content="#000000">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
+  <style>
+    * { box-sizing: border-box; }
+    html, body { background: #000; color: #e5e5e5; margin: 0; padding: 0; }
+    body {
+      font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      padding: env(safe-area-inset-top) 16px
+               env(safe-area-inset-bottom) 16px;
+    }
+    /* 顶部 */
+    .top { display: flex; align-items: center; gap: 12px; padding: 8px 0 14px; }
+    .top h1 { margin: 0; font-size: 16px; font-weight: 700; color: #fff; letter-spacing: 0.5px; }
+    .top .meta { color: #555; font-size: 11px; flex: 1; }
+    .top .meta .t { color: #888; }
+    /* key 切换器：暗色下拉 */
+    .alias-sel { background: #0a0a0a; color: #e5e5e5;
+                 border: 1px solid #1f1f1f; border-radius: 4px;
+                 font: 11px ui-monospace, SFMono-Regular, Menlo, monospace;
+                 padding: 4px 8px; cursor: pointer;
+                 appearance: none; -webkit-appearance: none;
+                 background-image: linear-gradient(45deg, transparent 50%, #888 50%),
+                                   linear-gradient(135deg, #888 50%, transparent 50%);
+                 background-position: calc(100% - 11px) 50%, calc(100% - 7px) 50%;
+                 background-size: 4px 4px, 4px 4px;
+                 background-repeat: no-repeat;
+                 padding-right: 22px; }
+    .alias-sel:focus { outline: none; border-color: #333; }
+    .top button { background: transparent; color: #888; border: 1px solid #333;
+                  padding: 5px 12px; border-radius: 4px; font: inherit; cursor: pointer; }
+    .top button:active { background: #1a1a1a; color: #fff; }
+
+    /* 卡片网格：display:contents 让 main 的 grid 直接看到 cards + trend-box */
+    .grid { display: contents; }
+    .card { min-width: 0; }
+
+    /* 移动端主体布局：CSS Grid 3 列 + 显式位置
+       4 个 card 自动排成 3+1（dense），trend-box 显式 grid-column: 2/4 占第 2 行 col 2-3 */
+    main {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      grid-auto-flow: row dense;
+      gap: 10px;
+    }
+    .toolbar { grid-column: 1 / -1; }  /* 顶部 toolbar 跨整行 */
+
+    /* 移动端回 1 列 */
+    @media (max-width: 720px) {
+      main { grid-template-columns: 1fr; }
+    }
+
+    /* 仪表盘卡片 */
+    .card { background: #0a0a0a; border: 1px solid #1a1a1a; border-radius: 8px;
+            padding: 12px 14px; position: relative; overflow: hidden; }
+    .card-head { display: flex; align-items: baseline; justify-content: space-between;
+                 margin-bottom: 8px; }
+    .card-title { font-size: 14px; font-weight: 600; color: #fff; }
+    .card-title .model { color: #888; font-weight: 400; margin-left: 4px; }
+    .card-status { font-size: 10px; padding: 1px 6px; border-radius: 3px; }
+    .card-status.ok { color: #4ade80; border: 1px solid #166534; }
+    .card-status.fail { color: #f87171; border: 1px solid #7f1d1d; }
+
+    /* 5h 大数字 */
+    .big { display: flex; align-items: baseline; gap: 6px; margin: 2px 0 6px; }
+    .big .pct { font-size: 28px; font-weight: 700; line-height: 1; font-variant-numeric: tabular-nums; }
+    .big .lbl { color: #666; font-size: 10px; text-transform: uppercase; letter-spacing: 0.5px; }
+
+    /* 进度条 */
+    .bar { width: 100%; height: 4px; background: #1a1a1a; border-radius: 2px;
+           overflow: hidden; margin: 4px 0 10px; }
+    .bar > div { height: 100%; transition: width 0.4s ease; }
+
+    /* 周用量（小） */
+    .small { display: flex; align-items: center; gap: 8px; font-size: 11px;
+             color: #888; margin: 2px 0 4px; }
+    .small .pct { font-variant-numeric: tabular-nums; font-weight: 600; min-width: 36px; }
+    .small .bar { flex: 1; height: 3px; margin: 0; }
+
+    /* sparkline */
+    .spark { font-family: monospace; letter-spacing: -1px; font-size: 10px;
+             line-height: 1; margin-top: 6px; opacity: 0.85; }
+
+    /* 倒计时 + 剩余额度行 */
+    .meta-row { display: flex; align-items: center; gap: 4px;
+                font-size: 10px; margin-top: 6px;
+                font-variant-numeric: tabular-nums; }
+    .meta-row .cd { color: #cbd5e1; font-weight: 500; }
+    .cd-row { display: flex; align-items: center; gap: 6px;
+              font-size: 10px; margin-top: 4px; margin-bottom: 2px;
+              font-variant-numeric: tabular-nums; }
+    .cd-row .cd { color: #cbd5e1; font-weight: 500; }
+    /* 5H 用量（左侧大数字） + 5H/周 倒计时（右侧两行）横排
+       关键对齐：pct 24px 文字，cd-stack 高度 = 24px，
+       两行 12px 居中堆叠（5H 刷新在 0-12px 区、周刷新在 12-24px 区）
+       整体与 pct 等高对齐 */
+    .big-row { display: flex; align-items: center; gap: 10px;
+               min-width: 0; margin: 2px 0 6px; }
+    .big-left { display: flex; align-items: baseline; gap: 6px;
+                flex-shrink: 0; min-height: 24px; }
+    .big-left .pct { font-size: 24px; font-weight: 700; line-height: 1;
+                     font-variant-numeric: tabular-nums; }
+    .big-left .lbl { color: #666; font-size: 9px; text-transform: uppercase;
+                     letter-spacing: 0.5px; }
+    /* 5H / 周 倒计时两行：固定 24px 高，5H 刷新顶部对齐 pct 顶部，
+       周刷新底部对齐 pct 底部（两行 12px 严格均分） */
+    .cd-stack { display: flex; flex-direction: column; flex: 1;
+                min-width: 0; height: 24px;
+                justify-content: space-between;
+                font-variant-numeric: tabular-nums; }
+    .cd-line { font-size: 9px; line-height: 12px; color: #888;
+               white-space: nowrap; overflow: hidden;
+               text-overflow: ellipsis; }
+    .cd-line .cd { color: #cbd5e1; font-weight: 600; }
+    .cd-combo-inline { display: inline-flex; align-items: center; gap: 4px;
+                       font-size: 10px; margin-left: auto;
+                       font-variant-numeric: tabular-nums;
+                       color: #888; white-space: nowrap; }
+    .cd-combo-inline .cd { color: #cbd5e1; font-weight: 600; }
+    .cd-combo-inline .sep { color: #444; margin: 0 1px; }
+    /* 保留旧 .cd-combo 兼容（如有其他位置在用） */
+    .cd-combo { display: flex; align-items: center; gap: 5px;
+                font-size: 10px; margin: 8px 0 4px;
+                font-variant-numeric: tabular-nums;
+                color: #888; }
+    .cd-combo .cd { color: #cbd5e1; font-weight: 600; }
+    .cd-combo .sep { color: #444; margin: 0 1px; }
+    .quota-row { display: flex; gap: 12px; font-size: 10px; color: #888;
+                 margin-top: 4px; padding-top: 4px;
+                 border-top: 1px dashed #1a1a1a;
+                 font-variant-numeric: tabular-nums; }
+
+    /* 颜色 */
+    .g { color: #4ade80; } .y { color: #facc15; } .r { color: #f87171; } .d { color: #555; }
+    .bgg { background: #22c55e; } .bgy { background: #eab308; } .bgr { background: #ef4444; }
+
+    /* 状态/错误 */
+    .err { color: #f87171; font-size: 12px; padding: 6px 0; }
+    .empty { color: #555; padding: 60px 0; text-align: center; }
+
+    /* 趋势图区（与第 4 个 card 同行，撑满该行剩余 2 列） */
+    .trend-box {
+      grid-column: 2 / 4;       /* 第 2 行 col 2-3（与第 4 个 card 同行） */
+      grid-row: 2;              /* 强制第 2 行 */
+      display: flex;
+      flex-direction: column;
+      min-height: 180px;
+      padding: 10px 12px;
+      background: #0a0a0a;
+      border: 1px solid #1a1a1a; border-radius: 8px;
+    }
+    @media (max-width: 720px) {
+      .trend-box { grid-column: 1; grid-row: auto; }
+    }
+    /* 单 alias 模式：cards 数量自适应，trend-box 移到下一行占整行 */
+    main.single-alias .trend-box {
+      grid-column: 1 / -1;
+      grid-row: auto;
+      margin-top: 4px;
+    }
+    .trend-head { display: flex; justify-content: space-between; color: #888;
+                  font-size: 11px; margin-bottom: 6px; flex-shrink: 0; }
+    .trend-head .lbl { color: #ccc; }
+    .trend-body { flex: 1; position: relative; min-height: 120px; }
+    svg.spark-svg { width: 100%; height: 100%; display: block; }
+  </style>
+</head>
+<body>
+  <div class="top">
+    <h1>MinimaxGuard</h1>
+    <select id="aliasSelect" class="alias-sel" onchange="onAliasChange()">
+      <option value="__all__">全部 keys</option>
+    </select>
+    <div class="meta">
+      <span class="t" id="curTime">--:--:--</span> ·
+      <span id="keyCount">0 keys</span> ·
+      <span id="histCount">0 hist</span> ·
+      <span id="countdown">--s</span>
+    </div>
+    <button onclick="refresh()">刷新</button>
+  </div>
+
+  <main>
+  <div id="grid" class="grid">
+    <!-- 4 个 card 由 JS 注入到这里 -->
+  </div>
+  <!-- trend-box 放在 #grid 之外（main 直接子节点），避免 grid.innerHTML='' 把它清空 -->
+  <div class="trend-box">
+    <div class="trend-head">
+      <span class="lbl">5h 已用% 趋势（24h）</span>
+      <span id="chartRange">—</span>
+    </div>
+    <div class="trend-body"><canvas id="trendChart"></canvas></div>
+  </div>
+  </main>
+
+  <script>
+    let nextRefresh = 0;
+    let lastSparkData = new Map();
+    let lastKeyCount = 0;
+    let lastHistCount = 0;
+    let lastErr = '';
+    // ---- key 切换器 ----
+    const STORAGE_ALIAS = 'minimaxguard.alias';
+    let allKeysCache = [];        // 缓存 /api/keys 完整结果，避免重复请求
+    let allRecordsCache = [];     // 缓存 /api/history records（用于 onAliasChange 重绘 chart）
+    let selectedAlias = '__all__'; // 当前选中的 alias（'__all__' = 全部）
+
+    function loadSelectedAlias() {
+      try {
+        const v = localStorage.getItem(STORAGE_ALIAS);
+        if (v) selectedAlias = v;
+      } catch (e) { /* localStorage 不可用时静默 */ }
+    }
+    function saveSelectedAlias() {
+      try { localStorage.setItem(STORAGE_ALIAS, selectedAlias); }
+      catch (e) { /* ignore */ }
+    }
+    function populateAliasSelect() {
+      const sel = document.getElementById('aliasSelect');
+      if (!sel) return;
+      // 用 Set 去重 alias
+      const aliases = [...new Set(allKeysCache.map(k => k.alias))];
+      // 重建 options（保留 "__all__"）
+      sel.innerHTML = '<option value="__all__">全部 keys</option>'
+        + aliases.map(a => `<option value="${a}">${a}</option>`).join('');
+      // 恢复选择（如果该 alias 已被删除则回退到 __all__）
+      if (selectedAlias !== '__all__' && !aliases.includes(selectedAlias)) {
+        selectedAlias = '__all__';
+      }
+      sel.value = selectedAlias;
+    }
+    function onAliasChange() {
+      const sel = document.getElementById('aliasSelect');
+      if (!sel) return;
+      selectedAlias = sel.value;
+      saveSelectedAlias();
+      const visKeys = visibleKeys();
+      const visCardCount = visKeys.reduce((n, k) =>
+        n + ((k.models && k.models.length) || (k.error ? 1 : 0)), 0);
+      const mainEl = document.querySelector('main');
+      if (mainEl) {
+        mainEl.classList.toggle('single-alias', visCardCount > 0 && visCardCount <= 2);
+        const cols = Math.min(visCardCount, 3);
+        mainEl.style.gridTemplateColumns = cols > 0 ? `repeat(${cols}, 1fr)` : 'repeat(3, 1fr)';
+      }
+      // 立即用缓存数据重渲染（不重新请求 API）
+      const diag = { record_count: lastHistCount, exists: true };
+      rebuildChartFromCache(allRecordsCache);
+      renderCards(visKeys, diag);
+    }
+    function visibleKeys() {
+      if (selectedAlias === '__all__') return allKeysCache;
+      return allKeysCache.filter(k => k.alias === selectedAlias);
+    }
+
+    function pad(n) { return n < 10 ? '0' + n : '' + n; }
+    function nowStr() {
+      const d = new Date();
+      return pad(d.getHours()) + ':' + pad(d.getMinutes()) + ':' + pad(d.getSeconds());
+    }
+    function colorCls(p) {
+      if (p == null) return 'd';
+      if (p < 60) return 'g';
+      if (p < 85) return 'y';
+      return 'r';
+    }
+    function bgCls(p) {
+      if (p == null) return '';
+      if (p < 60) return 'bgg';
+      if (p < 85) return 'bgy';
+      return 'bgr';
+    }
+    function fmtTime(iso) {
+      if (!iso) return '-';
+      return iso.slice(11, 19);
+    }
+    function sparklineStr(values, w = 24) {
+      if (!values || !values.length) return '·'.repeat(w);
+      const sample = values.slice(-w);
+      while (sample.length < w) sample.unshift(sample[0]);
+      const blocks = '▁▂▃▄▅▆▇█';
+      const lo = Math.min(...sample), hi = Math.max(...sample);
+      if (hi === lo) return blocks[0].repeat(w);
+      return sample.map(v =>
+        blocks[Math.round((v - lo) / (hi - lo) * (blocks.length - 1))]
+      ).join('');
+    }
+    function usedPctFromRemain(rp) {
+      return typeof rp === 'number' ? Math.max(0, Math.min(100, 100 - rp)) : null;
+    }
+
+    function updateMeta() {
+      document.getElementById('curTime').textContent = nowStr();
+      document.getElementById('keyCount').textContent = lastKeyCount + ' keys';
+      document.getElementById('histCount').textContent = lastHistCount + ' hist';
+      const remain = Math.max(0, Math.round((nextRefresh - Date.now()) / 1000));
+      const cd = document.getElementById('countdown');
+      if (lastErr) { cd.textContent = 'err'; cd.className = 'r'; }
+      else { cd.textContent = remain + 's'; cd.className = remain < 10 ? 'y' : 'd'; }
+    }
+
+    // fetch 选项：禁用缓存（防 iPhone Safari 旧 JS 残留）
+    const FETCH_OPTS = { cache: 'no-store', headers: { 'X-Access-Key': '<KEY>' } };
+
+    // smartFetch：自动从 location.pathname 提取 key 并附加到 URL 上
+    // 兼容旧版 JS（fetch URL 写死无 key）和新版 JS
+    function smartFetch(url, opts) {
+      let u = url;
+      // 如果 URL 里没有 key，尝试从 location.pathname 提取
+      if (!/\/[A-Za-z0-9_-]{16,128}\//.test(u)) {
+        const m = location.pathname.match(/\/([A-Za-z0-9_-]{16,128})\//);
+        if (m) {
+          // 在路径第一个 / 后插入 key
+          u = '/' + m[1] + u;
+        }
+      }
+      return fetch(u, opts);
+    }
+
+    async function refresh(opts = { withHistory: true }) {
+      try {
+        // 默认首次拉 history 拿 24h 数据画图；之后由 WS 推送驱动
+        const fetches = [
+          smartFetch('/api/keys', FETCH_OPTS).then(r => {
+            if (!r.ok) throw new Error('keys HTTP ' + r.status);
+            return r.json();
+          }),
+          smartFetch('/api/diag', FETCH_OPTS).then(r => {
+            if (!r.ok) throw new Error('diag HTTP ' + r.status);
+            return r.json();
+          }),
+        ];
+        if (opts.withHistory) {
+          fetches.push(smartFetch('/api/history?limit=2000&view=mobile', FETCH_OPTS).then(r => {
+            if (!r.ok) throw new Error('history HTTP ' + r.status);
+            return r.json();
+          }));
+        }
+        const results = await Promise.all(fetches);
+        const keysResp = results[0];
+        const diagResp = results[1];
+        const histResp = opts.withHistory ? results[2] : { records: allRecordsCache };
+        lastKeyCount = (keysResp.keys || []).length;
+        lastHistCount = diagResp.record_count || 0;
+        lastErr = '';
+
+        // 缓存全量 keys + 填充切换器
+        allKeysCache = keysResp.keys || [];
+        allRecordsCache = histResp.records || [];
+        populateAliasSelect();
+
+        // lastSparkData：仍按全量记录累计（sparkline 在卡片内显示，与 alias 过滤独立）
+        lastSparkData.clear();
+        for (const r of (histResp.records || [])) {
+          if (!r.ok || !r.models) continue;
+          for (const m of r.models) {
+            // mobile view 字段：u (used), rp (remaining_percent)
+            const used = (m.u != null) ? m.u : (m.interval || {}).used;
+            if (typeof used === 'number') {
+              const k = `${r.alias}/${m.name}`;
+              if (!lastSparkData.has(k)) lastSparkData.set(k, []);
+              lastSparkData.get(k).push(used);
+            }
+          }
+        }
+        // 先 buildChart（按当前 alias 过滤）
+        rebuildChartFromCache(allRecordsCache);
+        // 切换 main 的 single-alias class（cards ≤ 2 时 trend-box 移到底部）
+        const visKeys = visibleKeys();
+        const visCardCount = visKeys.reduce((n, k) =>
+          n + ((k.models && k.models.length) || (k.error ? 1 : 0)), 0);
+        const mainEl = document.querySelector('main');
+        if (mainEl) {
+          mainEl.classList.toggle('single-alias', visCardCount > 0 && visCardCount <= 2);
+          // 自适应列数：1 card → 1fr；2 cards → 2fr；3+ → 3fr
+          const cols = Math.min(visCardCount, 3);
+          mainEl.style.gridTemplateColumns = cols > 0 ? `repeat(${cols}, 1fr)` : 'repeat(3, 1fr)';
+        }
+        // 再 renderCards（按当前 alias 过滤）
+        renderCards(visKeys, diagResp);
+        const total = [...lastSparkData.values()].reduce((a, v) => a + v.length, 0);
+        document.getElementById('chartRange').textContent = total ? `${total} 点` : '—';
+        nextRefresh = Date.now() + 60000;
+        lastRefreshAt = Date.now() / 1000;
+        updateCountdowns();
+      } catch (e) {
+        // 详细错误信息，便于排查 Safari 缓存的旧版 JS
+        lastErr = `${e.name}: ${e.message || String(e)}`;
+        if (window.console) console.error('[MinimaxGuard] refresh error', e);
+      }
+    }
+    // 用缓存的 histResp.records 重新构建 chart（按当前 alias 过滤）
+    function rebuildChartFromCache(records) {
+      if (!records) {
+        // 没有传 records → 重新请求（仅在 onAliasChange 中通过 refresh 触发的情况）
+        // 这里用 buildChart 直接传全量（不可取），所以从已有 allKeysCache 推导
+        return;
+      }
+      const filtered = (selectedAlias === '__all__')
+        ? records
+        : records.filter(r => r.alias === selectedAlias);
+      buildChart(filtered);
+    }
+
+    // 捕获整个页面的 JS 错误，显示在 meta 区
+    window.addEventListener('error', (ev) => {
+      lastErr = `${ev.message} @ ${ev.filename}:${ev.lineno}`;
+      if (window.console) console.error('[MinimaxGuard] window error', ev.error);
+    });
+    window.addEventListener('unhandledrejection', (ev) => {
+      const r = ev.reason || {};
+      lastErr = `Promise: ${r.message || r}`;
+    });
+
+    function renderCards(keys, diag) {
+      const grid = document.getElementById('grid');
+      if (!keys.length) {
+        let hint = '无 alias 记录。在 config.json 的 keys 列表里至少配置一个 token。';
+        if (diag && !diag.exists) hint = '数据文件不存在。';
+        else if (diag && diag.record_count === 0) hint = '数据为空，等待首次轮询（最多 60s）…';
+        else if (lastErr) hint = '请求失败: ' + lastErr;
+        grid.innerHTML = `<div class="empty">${hint}</div>`;
+        return;
+      }
+      const cards = [];
+      for (const k of keys) {
+        const status = k.ok ? 'ok' : 'fail';
+        const statusTxt = k.ok ? 'OK' : 'FAIL';
+        if (!k.models || !k.models.length) {
+          cards.push(`
+            <div class="card">
+              <div class="card-head">
+                <div class="card-title">${k.alias}</div>
+                <span class="card-status ${status}">${statusTxt}</span>
+              </div>
+              <div class="err">${k.error || '无数据'}</div>
+            </div>`);
+          continue;
+        }
+        for (const m of k.models) {
+          const interval = m.interval || {};
+          const weekly = m.weekly || {};
+          const iP = usedPctFromRemain(interval.remaining_percent);
+          const wP = usedPctFromRemain(weekly.remaining_percent);
+          const sparkVals = lastSparkData.get(`${k.alias}/${m.name}`) || [];
+          const spark = sparklineStr(sparkVals, 28);
+          const sparkColor = sparkVals.length ? colorCls(
+            (iP || 0) >= 85 ? 100 : (iP || 0) >= 60 ? 70 : 30
+          ) : 'd';
+          // 计算剩余额度（绝对值）
+          const iRemain = (interval.total != null && interval.used != null)
+            ? (interval.total - interval.used) : null;
+          const wRemain = (weekly.total != null && weekly.used != null)
+            ? (weekly.total - weekly.used) : null;
+          // 存储原始数据供 tick 倒计时更新用
+          window.__minimaxLast = window.__minimaxLast || {};
+          window.__minimaxLast[`${k.alias}/${m.name}`] = { interval, weekly };
+          // 计算初始倒计时（render 时显示）
+          const iCountdown = formatCountdown(interval.remains_time_seconds);
+          const wCountdown = formatCountdown(weekly.remains_time_seconds);
+          cards.push(`
+            <div class="card">
+              <div class="card-head">
+                <div class="card-title">${k.alias}<span class="model">· ${m.name || '-'}</span></div>
+                <span class="card-status ${status}">${statusTxt}</span>
+              </div>
+              <div class="big-row">
+                <div class="big-left">
+                  <span class="pct ${colorCls(iP)}">${iP == null ? '-' : iP.toFixed(0) + '%'}</span>
+                  <span class="lbl">5h 用量</span>
+                </div>
+                <div class="cd-stack">
+                  <div class="cd-line">
+                    <span class="d">5H 刷新</span>
+                    <span class="cd i-cd" data-remain="${interval.remains_time_seconds || 0}">${iCountdown}</span>
+                  </div>
+                  <div class="cd-line">
+                    <span class="d">周 刷新</span>
+                    <span class="cd w-cd" data-remain="${weekly.remains_time_seconds || 0}">${wCountdown}</span>
+                  </div>
+                </div>
+              </div>
+              <div class="bar"><div class="${bgCls(iP)}" style="width:${iP || 0}%"></div></div>
+              <div class="small">
+                <span>周用量</span>
+                <span class="pct ${colorCls(wP)}">${wP == null ? '-' : wP.toFixed(0) + '%'}</span>
+                <div class="bar"><div class="${bgCls(wP)}" style="width:${wP || 0}%"></div></div>
+              </div>
+              <div class="quota-row">
+                <span class="d">5h 余 ${iRemain == null ? '-' : iRemain.toLocaleString()}</span>
+                <span class="d">周余 ${wRemain == null ? '-' : wRemain.toLocaleString()}</span>
+              </div>
+              <div class="spark ${sparkColor}">${spark}</div>
+            </div>`);
+        }
+      }
+      // 4 个 card 注入到 #grid（trend-box 是 main 的直接子节点，不在 #grid 内，不会被 innerHTML 清空）
+      grid.innerHTML = cards.join('');
+    }
+
+    // ---- 倒计时格式化 ----
+    let lastRefreshAt = 0;
+    function formatCountdown(seconds) {
+      if (seconds == null || isNaN(seconds) || seconds < 0) return '-';
+      const s = Math.floor(seconds);
+      const d = Math.floor(s / 86400);
+      const h = Math.floor((s % 86400) / 3600);
+      const m = Math.floor((s % 3600) / 60);
+      const sec = s % 60;
+      const pad = n => n < 10 ? '0' + n : '' + n;
+      if (d > 0) return `${d}d ${pad(h)}:${pad(m)}:${pad(sec)}`;
+      if (h > 0) return `${pad(h)}:${pad(m)}:${pad(sec)}`;
+      return `${pad(m)}:${pad(sec)}`;
+    }
+
+    // 每秒更新所有倒计时（基于数据刷新时刻 + 流逝秒数）
+    function updateCountdowns() {
+      const elapsed = Date.now() / 1000 - lastRefreshAt;
+      document.querySelectorAll('.i-cd').forEach(el => {
+        const initial = parseInt(el.dataset.remain) || 0;
+        el.textContent = formatCountdown(Math.max(0, initial - elapsed));
+      });
+      document.querySelectorAll('.w-cd').forEach(el => {
+        const initial = parseInt(el.dataset.remain) || 0;
+        el.textContent = formatCountdown(Math.max(0, initial - elapsed));
+      });
+    }
+
+    function tick() {
+      updateMeta();
+      updateCountdowns();
+      // 每 60s 拉一次 history 拿新数据点画图（用 WS 推送无法补全历史曲线）
+      if (nextRefresh > 0 && Date.now() >= nextRefresh) {
+        nextRefresh = Date.now() + 60000;
+        refresh({ withHistory: true });
+      }
+    }
+
+    // ---- Chart.js 折线图（24h 5h 已用值）----
+    const COLORS = ['#38bdf8', '#fbbf24', '#f472b6', '#a78bfa', '#34d399',
+                    '#fb7185', '#60a5fa', '#facc15', '#22d3ee', '#a3e635'];
+    let chart = null;
+    function buildChart(records) {
+      // 拉取 24h × 60min = 1440 个点（按当前 60s 一次轮询的频率）
+      const byKey = new Map();
+      const cutoff = Date.now() - 24 * 60 * 60 * 1000;
+      for (const r of (records || [])) {
+        if (!r.ok || !r.models) continue;
+        const t = Date.parse(r.ts);
+        if (isNaN(t) || t < cutoff) continue;
+        for (const m of r.models) {
+          // 用 5h 已用百分比（100 - remaining_percent），比绝对值更有参考意义
+          // 兼容 mobile view 精简字段（m.rp）和完整字段（m.interval.remaining_percent）
+          const rem = (m.rp != null) ? m.rp : (m.interval || {}).remaining_percent;
+          if (typeof rem !== 'number') continue;
+          const usedPct = Math.max(0, Math.min(100, 100 - rem));
+          const k = `${r.alias}/${m.name}`;
+          if (!byKey.has(k)) byKey.set(k, []);
+          byKey.get(k).push({ x: t, y: usedPct });
+        }
+      }
+      // 按时间排序
+      for (const arr of byKey.values()) arr.sort((a, b) => a.x - b.x);
+
+      const datasets = [...byKey.entries()].map(([label, points], i) => {
+        const color = COLORS[i % COLORS.length];
+        return {
+          label,
+          data: points,
+          borderColor: color,
+          backgroundColor: color + '20',
+          tension: 0.25,
+          pointRadius: 0,
+          pointHoverRadius: 3,
+          borderWidth: 1.5,
+          spanGaps: true,
+        };
+      });
+
+      if (chart) { chart.destroy(); chart = null; }
+      const ctx = document.getElementById('trendChart');
+      if (!ctx) return;
+      chart = new Chart(ctx, {
+        type: 'line',
+        data: { datasets },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          animation: false,
+          interaction: { mode: 'nearest', intersect: false, axis: 'x' },
+          plugins: {
+            legend: {
+              display: true, position: 'top', align: 'end',
+              labels: {
+                color: '#aaa', font: { size: 10, family: 'monospace' },
+                boxWidth: 8, boxHeight: 8, padding: 8, usePointStyle: true,
+              },
+            },
+            tooltip: {
+              backgroundColor: '#000', borderColor: '#333', borderWidth: 1,
+              titleColor: '#fff', bodyColor: '#ccc',
+              titleFont: { size: 11 }, bodyFont: { size: 11 },
+              callbacks: {
+                title: (items) => {
+                  const t = items[0].parsed.x;
+                  const d = new Date(t);
+                  return d.toLocaleString('zh-CN', {
+                    month: '2-digit', day: '2-digit',
+                    hour: '2-digit', minute: '2-digit',
+                  });
+                },
+                label: (item) => `${item.dataset.label}: ${item.parsed.y}`,
+              },
+            },
+          },
+          scales: {
+            x: {
+              type: 'time',
+              min: Date.now() - 24 * 60 * 60 * 1000,
+              max: Date.now(),
+              time: {
+                displayFormats: { hour: 'HH:mm', day: 'MM-dd HH:mm' },
+                tooltipFormat: 'MM-dd HH:mm',
+              },
+              ticks: {
+                color: '#888', maxRotation: 0, autoSkip: true, maxTicksLimit: 6,
+                font: { size: 10 },
+                source: 'auto',
+              },
+              grid: { color: '#1a1a1a', drawTicks: false },
+            },
+            y: {
+              beginAtZero: true,
+              suggestedMax: 100,
+              ticks: {
+                color: '#888', font: { size: 10 },
+                callback: (v) => v + '%',
+                precision: 0,
+              },
+              grid: { color: '#1a1a1a' },
+              title: { display: true, text: '5h 已用 %', color: '#666',
+                       font: { size: 10 } },
+            },
+          },
+        },
+      });
+    }
+
+    // ---- WebSocket 实时推送（替代 60s 轮询为秒级）----
+    let ws = null;
+    let wsReconnectTimer = null;
+    const WS_RETRY_MS = 5000;
+
+    function connectWS() {
+      try {
+        const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+        const url = `${proto}//${location.host}/ws?key=<KEY>`;
+        ws = new WebSocket(url);
+      } catch (e) {
+        console.warn('[MinimaxGuard] WS construct failed:', e);
+        scheduleWSReconnect();
+        return;
+      }
+      ws.addEventListener('open', () => {
+        console.log('[MinimaxGuard] WS connected');
+        // 1) 拉 history 拿 24h 曲线数据（首次需要画图）
+        refresh({ withHistory: true });
+        // 2) 同时通知后端立即推一次最新状态（不等 60s 轮询）
+        try { ws.send(JSON.stringify({ type: 'request_poll' })); }
+        catch (e) { console.warn('[MinimaxGuard] request_poll failed', e); }
+      });
+      ws.addEventListener('message', (ev) => {
+        let msg;
+        try { msg = JSON.parse(ev.data); } catch { return; }
+        if (msg.type === 'usage_update' && msg.record) {
+          // 单条记录更新：用增量更新缓存并重渲染，避免重复请求
+          applyUsageUpdate(msg.record);
+        }
+      });
+      ws.addEventListener('close', () => {
+        console.log('[MinimaxGuard] WS closed, retry in', WS_RETRY_MS, 'ms');
+        ws = null;
+        scheduleWSReconnect();
+      });
+      ws.addEventListener('error', (e) => {
+        console.warn('[MinimaxGuard] WS error:', e);
+      });
+    }
+    function scheduleWSReconnect() {
+      if (wsReconnectTimer) return;
+      wsReconnectTimer = setTimeout(() => {
+        wsReconnectTimer = null;
+        connectWS();
+      }, WS_RETRY_MS);
+    }
+    // 增量更新：把单条新记录合并到 allKeysCache / allRecordsCache，然后重渲染
+    function applyUsageUpdate(record) {
+      // 更新 allKeysCache：找到该 alias 的最新记录替换
+      const idx = allKeysCache.findIndex((k) => k.alias === record.alias);
+      const simplified = {
+        alias: record.alias,
+        ts: record.ts || record.timestamp,
+        ok: record.ok,
+        error: record.error,
+        models: record.models,
+      };
+      if (idx >= 0) allKeysCache[idx] = simplified;
+      else allKeysCache.push(simplified);
+
+      // 更新 allRecordsCache：追加（限制 history）
+      if (allRecordsCache.length > 5000) {
+        allRecordsCache = allRecordsCache.slice(-4500);
+      }
+      allRecordsCache.push({
+        alias: record.alias,
+        timestamp: record.ts || record.timestamp,
+        ok: record.ok,
+        models: record.models,
+      });
+
+      // 重建 sparkData（保持与 refresh() 一致）
+      lastSparkData.clear();
+      for (const r of allRecordsCache) {
+        if (!r.ok || !r.models) continue;
+        for (const m of r.models) {
+          const used = (m.u != null) ? m.u : (m.interval || {}).used;
+          if (typeof used === 'number') {
+            const k = `${r.alias}/${m.name}`;
+            if (!lastSparkData.has(k)) lastSparkData.set(k, []);
+            lastSparkData.get(k).push(used);
+          }
+        }
+      }
+      // 触发重渲染
+      const visKeys = visibleKeys();
+      rebuildChartFromCache(allRecordsCache);
+      renderCards(visKeys, { record_count: allRecordsCache.length, exists: true });
+      // 更新倒计时 + 重置 history 60s 拉取计时器（WS 推一条就推迟一次）
+      lastRefreshAt = Date.now() / 1000;
+      nextRefresh = Date.now() + 60000;
+      updateCountdowns();
+    }
+
+    // 启动前先恢复用户上次选择的 alias（localStorage）
+    loadSelectedAlias();
+    refresh();
+    updateMeta();
+    setInterval(tick, 1000);
+    // 启动 WebSocket 实时推送
+    connectWS();
+  </script>
+</body>
+</html>
