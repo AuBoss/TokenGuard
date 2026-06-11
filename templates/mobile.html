@@ -615,11 +615,104 @@
       });
     }
 
+    // ---- WebSocket 实时推送（替代 60s 轮询为秒级）----
+    let ws = null;
+    let wsReconnectTimer = null;
+    const WS_RETRY_MS = 5000;
+
+    function connectWS() {
+      try {
+        const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+        const url = `${proto}//${location.host}/ws?key=<KEY>`;
+        ws = new WebSocket(url);
+      } catch (e) {
+        console.warn('[MinimaxGuard] WS construct failed:', e);
+        scheduleWSReconnect();
+        return;
+      }
+      ws.addEventListener('open', () => {
+        console.log('[MinimaxGuard] WS connected');
+        // 连接后立即触发一次完整 refresh（拿到初始数据）
+        refresh();
+      });
+      ws.addEventListener('message', (ev) => {
+        let msg;
+        try { msg = JSON.parse(ev.data); } catch { return; }
+        if (msg.type === 'usage_update' && msg.record) {
+          // 单条记录更新：用增量更新缓存并重渲染，避免重复请求
+          applyUsageUpdate(msg.record);
+        }
+      });
+      ws.addEventListener('close', () => {
+        console.log('[MinimaxGuard] WS closed, retry in', WS_RETRY_MS, 'ms');
+        ws = null;
+        scheduleWSReconnect();
+      });
+      ws.addEventListener('error', (e) => {
+        console.warn('[MinimaxGuard] WS error:', e);
+      });
+    }
+    function scheduleWSReconnect() {
+      if (wsReconnectTimer) return;
+      wsReconnectTimer = setTimeout(() => {
+        wsReconnectTimer = null;
+        connectWS();
+      }, WS_RETRY_MS);
+    }
+    // 增量更新：把单条新记录合并到 allKeysCache / allRecordsCache，然后重渲染
+    function applyUsageUpdate(record) {
+      // 更新 allKeysCache：找到该 alias 的最新记录替换
+      const idx = allKeysCache.findIndex((k) => k.alias === record.alias);
+      const simplified = {
+        alias: record.alias,
+        ts: record.ts || record.timestamp,
+        ok: record.ok,
+        error: record.error,
+        models: record.models,
+      };
+      if (idx >= 0) allKeysCache[idx] = simplified;
+      else allKeysCache.push(simplified);
+
+      // 更新 allRecordsCache：追加（限制 history）
+      if (allRecordsCache.length > 5000) {
+        allRecordsCache = allRecordsCache.slice(-4500);
+      }
+      allRecordsCache.push({
+        alias: record.alias,
+        timestamp: record.ts || record.timestamp,
+        ok: record.ok,
+        models: record.models,
+      });
+
+      // 重建 sparkData（保持与 refresh() 一致）
+      lastSparkData.clear();
+      for (const r of allRecordsCache) {
+        if (!r.ok || !r.models) continue;
+        for (const m of r.models) {
+          const used = (m.u != null) ? m.u : (m.interval || {}).used;
+          if (typeof used === 'number') {
+            const k = `${r.alias}/${m.name}`;
+            if (!lastSparkData.has(k)) lastSparkData.set(k, []);
+            lastSparkData.get(k).push(used);
+          }
+        }
+      }
+      // 触发重渲染
+      const visKeys = visibleKeys();
+      rebuildChartFromCache(allRecordsCache);
+      renderCards(visKeys, { record_count: allRecordsCache.length, exists: true });
+      // 更新倒计时
+      lastRefreshAt = Date.now() / 1000;
+      updateCountdowns();
+    }
+
     // 启动前先恢复用户上次选择的 alias（localStorage）
     loadSelectedAlias();
     refresh();
     updateMeta();
     setInterval(tick, 1000);
+    // 启动 WebSocket 实时推送
+    connectWS();
   </script>
 </body>
 </html>

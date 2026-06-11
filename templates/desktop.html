@@ -246,6 +246,32 @@
     document.getElementById('metricSelect').onchange = refreshAll;
     refreshAll();
     setInterval(refreshAll, 30000);
+
+    // ---- WebSocket 实时推送（降级为 trigger 一次 refresh）----
+    let ws = null;
+    let wsRetry = null;
+    function connectWS() {
+      try {
+        const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+        ws = new WebSocket(`${proto}//${location.host}/ws?key=<KEY>`);
+      } catch (e) { scheduleWSRetry(); return; }
+      ws.addEventListener('message', (ev) => {
+        try {
+          const msg = JSON.parse(ev.data);
+          if (msg.type === 'usage_update') {
+            // 收到新数据：立即完整刷新（desktop 端全量重绘更简单）
+            refreshAll();
+          }
+        } catch {}
+      });
+      ws.addEventListener('close', () => { ws = null; scheduleWSRetry(); });
+      ws.addEventListener('error', () => {});
+    }
+    function scheduleWSRetry() {
+      if (wsRetry) return;
+      wsRetry = setTimeout(() => { wsRetry = null; connectWS(); }, 5000);
+    }
+    connectWS();
   </script>
 </body>
 </html>

@@ -10,10 +10,12 @@ import compression from 'compression';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promises as fs } from 'node:fs';
+import { createServer } from 'node:http';
 
 import { loadOrCreateAccessKey, simplifyRecord } from './utils.js';
 import { UsageStore } from './store.js';
 import { BackgroundPoller } from './poller.js';
+import { attachWebSocket } from './ws.js';
 import type { AppConfig, UsageRecord } from './types.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -176,8 +178,10 @@ async function main(): Promise<void> {
   app.get('/mobile', async (_req, res) => {
     try {
       const html = await fs.readFile(path.join(TEMPLATE_DIR, 'mobile.html'), 'utf-8');
+      // 注入真实 access key，让前端 WS URL 免去 prompt 鉴权
+      const rendered = html.replace(/<KEY>/g, accessKey);
       res.set('Cache-Control', 'no-cache, no-store, must-revalidate');
-      res.type('html').send(html);
+      res.type('html').send(rendered);
     } catch (e) {
       res.status(500).send(`mobile.html not found: ${(e as Error).message}`);
     }
@@ -187,8 +191,9 @@ async function main(): Promise<void> {
   app.get('/', async (_req, res) => {
     try {
       const html = await fs.readFile(path.join(TEMPLATE_DIR, 'desktop.html'), 'utf-8');
+      const rendered = html.replace(/<KEY>/g, accessKey);
       res.set('Cache-Control', 'no-cache, no-store, must-revalidate');
-      res.type('html').send(html);
+      res.type('html').send(rendered);
     } catch (e) {
       res.status(500).send(`desktop.html not found: ${(e as Error).message}`);
     }
@@ -197,12 +202,18 @@ async function main(): Promise<void> {
   // 404
   app.use((_req, res) => res.status(404).send('Not Found'));
 
-  // 启动
+  // 启动 HTTP + WebSocket
   const port = parseInt(process.env.PORT || '5050', 10);
   const host = process.env.HOST || '127.0.0.1';
-  app.listen(port, host, () => {
+  const httpServer = createServer(app);
+
+  // 挂载 WebSocket（poller emit('record') → 推送到所有订阅客户端）
+  attachWebSocket(httpServer, poller, accessKey);
+
+  httpServer.listen(port, host, () => {
     console.log(`[server] listening on http://${host}:${port}`);
-    console.log(`[server] mobile: http://${host}:${port}/mobile/${accessKey}/`);
+    console.log(`[server] mobile:   http://${host}:${port}/mobile/${accessKey}/`);
+    console.log(`[server] ws:       ws://${host}:${port}/ws?key=${accessKey}`);
   });
 
   // 优雅关闭
