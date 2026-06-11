@@ -141,13 +141,22 @@ async function main(): Promise<void> {
 
   // 历史数据
   app.get('/api/history', (req, res) => {
-    const limit = Math.min(parseInt((req.query.limit as string) || '2000', 10), 10000);
+    const limit = Math.min(parseInt((req.query.limit as string) || '2000', 10), 20000);
+    const hours = parseInt((req.query.hours as string) || '0', 10);  // 0 = 不按时间过滤
     const aliasFilter = req.query.alias as string | undefined;
     const view = (req.query.view as string) || 'full';
 
     let records = store.all();
     if (aliasFilter) {
       records = records.filter((r) => r.alias === aliasFilter);
+    }
+    // 按时间窗口过滤（小时数）：chart 需要 24h 完整曲线
+    if (hours > 0) {
+      const cutoff = Date.now() - hours * 60 * 60 * 1000;
+      records = records.filter((r) => {
+        const t = Date.parse(r.timestamp);
+        return !isNaN(t) && t >= cutoff;
+      });
     }
     records = records.slice(-limit);
 
