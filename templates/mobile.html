@@ -306,13 +306,47 @@
       else { cd.textContent = remain + 's'; cd.className = remain < 10 ? 'y' : 'd'; }
     }
 
-    async function refresh() {
+    // fetch 选项：禁用缓存（防 iPhone Safari 旧 JS 残留）
+    const FETCH_OPTS = { cache: 'no-store', headers: { 'X-Access-Key': '<KEY>' } };
+
+    // smartFetch：自动从 location.pathname 提取 key 并附加到 URL 上
+    // 兼容旧版 JS（fetch URL 写死无 key）和新版 JS
+    function smartFetch(url, opts) {
+      let u = url;
+      // 如果 URL 里没有 key，尝试从 location.pathname 提取
+      if (!/\/[A-Za-z0-9_-]{16,128}\//.test(u)) {
+        const m = location.pathname.match(/\/([A-Za-z0-9_-]{16,128})\//);
+        if (m) {
+          // 在路径第一个 / 后插入 key
+          u = '/' + m[1] + u;
+        }
+      }
+      return fetch(u, opts);
+    }
+
+    async function refresh(opts = { withHistory: true }) {
       try {
-        const [keysResp, histResp, diagResp] = await Promise.all([
-          fetch('/api/keys').then(r => r.json()),
-          fetch('/api/history?limit=2000&view=mobile').then(r => r.json()),
-          fetch('/api/diag').then(r => r.json()),
-        ]);
+        // 默认首次拉 history 拿 24h 数据画图；之后由 WS 推送驱动
+        const fetches = [
+          smartFetch('/api/keys', FETCH_OPTS).then(r => {
+            if (!r.ok) throw new Error('keys HTTP ' + r.status);
+            return r.json();
+          }),
+          smartFetch('/api/diag', FETCH_OPTS).then(r => {
+            if (!r.ok) throw new Error('diag HTTP ' + r.status);
+            return r.json();
+          }),
+        ];
+        if (opts.withHistory) {
+          fetches.push(smartFetch('/api/history?limit=2000&view=mobile', FETCH_OPTS).then(r => {
+            if (!r.ok) throw new Error('history HTTP ' + r.status);
+            return r.json();
+          }));
+        }
+        const results = await Promise.all(fetches);
+        const keysResp = results[0];
+        const diagResp = results[1];
+        const histResp = opts.withHistory ? results[2] : { records: allRecordsCache };
         lastKeyCount = (keysResp.keys || []).length;
         lastHistCount = diagResp.record_count || 0;
         lastErr = '';
@@ -502,7 +536,11 @@
     function tick() {
       updateMeta();
       updateCountdowns();
-      if (Date.now() >= nextRefresh) refresh();
+      // 每 60s 拉一次 history 拿新数据点画图（用 WS 推送无法补全历史曲线）
+      if (nextRefresh > 0 && Date.now() >= nextRefresh) {
+        nextRefresh = Date.now() + 60000;
+        refresh({ withHistory: true });
+      }
     }
 
     // ---- Chart.js 折线图（24h 5h 已用值）----
@@ -632,8 +670,11 @@
       }
       ws.addEventListener('open', () => {
         console.log('[MinimaxGuard] WS connected');
-        // 连接后立即触发一次完整 refresh（拿到初始数据）
-        refresh();
+        // 1) 拉 history 拿 24h 曲线数据（首次需要画图）
+        refresh({ withHistory: true });
+        // 2) 同时通知后端立即推一次最新状态（不等 60s 轮询）
+        try { ws.send(JSON.stringify({ type: 'request_poll' })); }
+        catch (e) { console.warn('[MinimaxGuard] request_poll failed', e); }
       });
       ws.addEventListener('message', (ev) => {
         let msg;
@@ -701,8 +742,9 @@
       const visKeys = visibleKeys();
       rebuildChartFromCache(allRecordsCache);
       renderCards(visKeys, { record_count: allRecordsCache.length, exists: true });
-      // 更新倒计时
+      // 更新倒计时 + 重置 history 60s 拉取计时器（WS 推一条就推迟一次）
       lastRefreshAt = Date.now() / 1000;
+      nextRefresh = Date.now() + 60000;
       updateCountdowns();
     }
 

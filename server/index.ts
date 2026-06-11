@@ -72,7 +72,10 @@ function extractKeyFromUrl(urlPath: string, validKey: string): string | null {
 
 function rewritePrefix(req: Request, key: string): void {
   // 把 /<key> 段从路径中任意位置剥掉（如 /api/keys/<KEY>/ → /api/keys/）
-  req.url = req.url.replace(`/${key}`, '') || '/';
+  let u = req.url.replace(`/${key}`, '') || '/';
+  // 兼容 nginx /minimax/ 反代（去前缀后可能残留 /minimax/）
+  u = u.replace(/^\/minimax\//, '/');
+  req.url = u;
 }
 
 // ---- 主程序 ----
@@ -175,11 +178,15 @@ async function main(): Promise<void> {
   app.use(express.static(PUBLIC_DIR, { maxAge: 0, etag: false }));
 
   // 移动端首页
-  app.get('/mobile', async (_req, res) => {
+  app.get('/mobile', async (req, res) => {
     try {
       const html = await fs.readFile(path.join(TEMPLATE_DIR, 'mobile.html'), 'utf-8');
-      // 注入真实 access key，让前端 WS URL 免去 prompt 鉴权
-      const rendered = html.replace(/<KEY>/g, accessKey);
+      // 注入 <KEY>（access key）和 <BASE_URL>（包含 key 的 URL 前缀）
+      // 这样前端 fetch 知道在哪加 key，无需从 location.pathname 解析
+      const baseUrl = `/${accessKey}`;
+      const rendered = html
+        .replace(/<KEY>/g, accessKey)
+        .replace(/<BASE_URL>/g, baseUrl);
       res.set('Cache-Control', 'no-cache, no-store, must-revalidate');
       res.type('html').send(rendered);
     } catch (e) {
@@ -187,11 +194,29 @@ async function main(): Promise<void> {
     }
   });
 
+  // 移动端 v2（不同文件名强制 iPhone 重新下载）
+  app.get('/mobile2', async (req, res) => {
+    try {
+      const html = await fs.readFile(path.join(TEMPLATE_DIR, 'mobile2.html'), 'utf-8');
+      const baseUrl = `/${accessKey}`;
+      const rendered = html
+        .replace(/<KEY>/g, accessKey)
+        .replace(/<BASE_URL>/g, baseUrl);
+      res.set('Cache-Control', 'no-cache, no-store, must-revalidate');
+      res.type('html').send(rendered);
+    } catch (e) {
+      res.status(500).send(`mobile2.html not found: ${(e as Error).message}`);
+    }
+  });
+
   // 桌面端首页
-  app.get('/', async (_req, res) => {
+  app.get('/', async (req, res) => {
     try {
       const html = await fs.readFile(path.join(TEMPLATE_DIR, 'desktop.html'), 'utf-8');
-      const rendered = html.replace(/<KEY>/g, accessKey);
+      const baseUrl = `/${accessKey}`;
+      const rendered = html
+        .replace(/<KEY>/g, accessKey)
+        .replace(/<BASE_URL>/g, baseUrl);
       res.set('Cache-Control', 'no-cache, no-store, must-revalidate');
       res.type('html').send(rendered);
     } catch (e) {

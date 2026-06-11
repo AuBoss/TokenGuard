@@ -107,6 +107,18 @@ export function attachWebSocket(
           case 'ping':
             ws.send(JSON.stringify({ type: 'pong', ts: Date.now() }));
             break;
+          case 'request_poll':
+            // 客户端连接后请求立即推送一次最新数据
+            // 复用 poller.runOnce() —— 调真实 API → 触发 'record' 事件 → 自动广播
+            if (client.authenticated) {
+              ws.send(JSON.stringify({ type: 'poll_triggered' }));
+              poller.runOnce().catch((e) => {
+                console.error(`[ws] runOnce failed: ${e.message}`);
+              });
+            } else {
+              ws.send(JSON.stringify({ type: 'error', message: 'auth required' }));
+            }
+            break;
           default:
             ws.send(JSON.stringify({ type: 'error', message: `unknown type: ${msg.type}` }));
         }

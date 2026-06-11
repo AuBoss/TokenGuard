@@ -64,7 +64,7 @@ export async function appendNDJSON(filePath: string, record: unknown): Promise<v
 
 /**
  * 解析并精简 Minimax API 响应为 UsageRecord
- * 兼容多种字段命名（不同 API 版本）
+ * 字段名完全匹配原 Python 版 _parse_model_remains
  */
 export function parseApiResponse(
   alias: string,
@@ -84,35 +84,45 @@ export function parseApiResponse(
     };
   }
 
-  // 找到 model_remains 数组（兼容多种字段名）
-  const models: any[] =
-    (data.model_remains as any[]) ||
-    (data.models as any[]) ||
-    (data.data as any)?.model_remains ||
-    [];
+  // 找到 model_remains 数组
+  const rawModels = (data as any).model_remains;
+  const models: any[] = Array.isArray(rawModels) ? rawModels : [];
 
-  const parsedModels = models.map((m: any) => {
-    const interval = m.interval || {};
-    const weekly = m.weekly || {};
-    return {
-      name: m.name || m.model || 'unknown',
+  // 毫秒时间戳 → ISO 字符串（与 Python _ms_to_iso 一致）
+  const msToIso = (ms: unknown): string | undefined => {
+    const n = typeof ms === 'number' ? ms : parseInt(String(ms || 0), 10);
+    if (!n || isNaN(n) || n <= 0) return undefined;
+    try {
+      return new Date(n).toISOString();
+    } catch {
+      return undefined;
+    }
+  };
+
+  const parsedModels = models
+    .filter((m) => m && typeof m === 'object')
+    .map((m: any) => ({
+      name: m.model_name || m.name || m.model || 'unknown',
       interval: {
-        used: interval.used,
-        total: interval.total,
-        remaining_percent: interval.remaining_percent,
-        end_time: interval.end_time,
-        // 兼容：API 返回 ms 的话除以 1000
-        remains_time_seconds: Math.floor((interval.remains_time || 0) / 1000),
+        total: m.current_interval_total_count,
+        used: m.current_interval_usage_count,
+        remaining_percent: m.current_interval_remaining_percent,
+        status: m.current_interval_status,
+        start_time: msToIso(m.start_time),
+        end_time: msToIso(m.end_time),
+        // API 返回毫秒（5h ~18,000,000），除以 1000 转秒
+        remains_time_seconds: Math.floor((m.remains_time || 0) / 1000),
       },
       weekly: {
-        used: weekly.used,
-        total: weekly.total,
-        remaining_percent: weekly.remaining_percent,
-        end_time: weekly.end_time,
-        remains_time_seconds: Math.floor((weekly.remains_time || 0) / 1000),
+        total: m.current_weekly_total_count,
+        used: m.current_weekly_usage_count,
+        remaining_percent: m.current_weekly_remaining_percent,
+        status: m.current_weekly_status,
+        start_time: msToIso(m.weekly_start_time),
+        end_time: msToIso(m.weekly_end_time),
+        remains_time_seconds: Math.floor((m.weekly_remains_time || 0) / 1000),
       },
-    };
-  });
+    }));
 
   return {
     ok: true,
