@@ -2,6 +2,12 @@
 
 每分钟监测多个 Minimax API key 的 Token Plan 剩余量，提供 **终端实时可视化**、**Web 仪表板** 与 **JSON 追加式历史数据**。
 
+## 📸 预览
+
+![MinimaxGuard 仪表板](docs/screenshot.png)
+
+> iPhone / 桌面浏览器友好的深色仪表板：实时 5h/周用量、刷新倒计时、剩余额度、24h 折线趋势图。3+1 卡片布局，折线图与第 4 个卡片同行，自适应填满。
+
 ## ✨ 功能
 
 - ⏱️  **每 60 秒** 轮询一次 `https://www.minimaxi.com/v1/token_plan/remains`（间隔可配）
@@ -16,13 +22,16 @@
 
 ```
 MinimaxGuard/
-├── config.json          # API key 与运行参数
+├── config.json          # API key 与运行参数（被 .gitignore 排除）
+├── config.example.json  # 示例配置（可入库）
 ├── monitor.py           # 主监控脚本（终端实时面板）
 ├── app.py               # Flask Web 服务（独立可选）
 ├── viewer.py            # 历史数据查看器（独立可选）
 ├── start.sh             # 一键启动脚本
 ├── requirements.txt     # Python 依赖
-├── data/                # NDJSON 数据（运行时自动创建）
+├── docs/                # 文档与截图
+│   └── screenshot.png
+├── data/                # NDJSON 数据（运行时自动创建，被 .gitignore 排除）
 │   └── usage.ndjson
 └── README.md
 ```
