@@ -918,6 +918,19 @@ MOBILE_HTML = """<!doctype html>
     .top h1 { margin: 0; font-size: 16px; font-weight: 700; color: #fff; letter-spacing: 0.5px; }
     .top .meta { color: #555; font-size: 11px; flex: 1; }
     .top .meta .t { color: #888; }
+    /* key 切换器：暗色下拉 */
+    .alias-sel { background: #0a0a0a; color: #e5e5e5;
+                 border: 1px solid #1f1f1f; border-radius: 4px;
+                 font: 11px ui-monospace, SFMono-Regular, Menlo, monospace;
+                 padding: 4px 8px; cursor: pointer;
+                 appearance: none; -webkit-appearance: none;
+                 background-image: linear-gradient(45deg, transparent 50%, #888 50%),
+                                   linear-gradient(135deg, #888 50%, transparent 50%);
+                 background-position: calc(100% - 11px) 50%, calc(100% - 7px) 50%;
+                 background-size: 4px 4px, 4px 4px;
+                 background-repeat: no-repeat;
+                 padding-right: 22px; }
+    .alias-sel:focus { outline: none; border-color: #333; }
     .top button { background: transparent; color: #888; border: 1px solid #333;
                   padding: 5px 12px; border-radius: 4px; font: inherit; cursor: pointer; }
     .top button:active { background: #1a1a1a; color: #fff; }
@@ -1043,6 +1056,12 @@ MOBILE_HTML = """<!doctype html>
     @media (max-width: 720px) {
       .trend-box { grid-column: 1; grid-row: auto; }
     }
+    /* 单 alias 模式：cards 数 ≤ 2，trend-box 移到下一行占整行 */
+    main.single-alias .trend-box {
+      grid-column: 1 / -1;
+      grid-row: auto;
+      margin-top: 4px;
+    }
     .trend-head { display: flex; justify-content: space-between; color: #888;
                   font-size: 11px; margin-bottom: 6px; flex-shrink: 0; }
     .trend-head .lbl { color: #ccc; }
@@ -1053,6 +1072,9 @@ MOBILE_HTML = """<!doctype html>
 <body>
   <div class="top">
     <h1>MinimaxGuard</h1>
+    <select id="aliasSelect" class="alias-sel" onchange="onAliasChange()">
+      <option value="__all__">全部 keys</option>
+    </select>
     <div class="meta">
       <span class="t" id="curTime">--:--:--</span> ·
       <span id="keyCount">0 keys</span> ·
@@ -1082,6 +1104,53 @@ MOBILE_HTML = """<!doctype html>
     let lastKeyCount = 0;
     let lastHistCount = 0;
     let lastErr = '';
+    // ---- key 切换器 ----
+    const STORAGE_ALIAS = 'minimaxguard.alias';
+    let allKeysCache = [];        // 缓存 /api/keys 完整结果，避免重复请求
+    let allRecordsCache = [];     // 缓存 /api/history records（用于 onAliasChange 重绘 chart）
+    let selectedAlias = '__all__'; // 当前选中的 alias（'__all__' = 全部）
+
+    function loadSelectedAlias() {
+      try {
+        const v = localStorage.getItem(STORAGE_ALIAS);
+        if (v) selectedAlias = v;
+      } catch (e) { /* localStorage 不可用时静默 */ }
+    }
+    function saveSelectedAlias() {
+      try { localStorage.setItem(STORAGE_ALIAS, selectedAlias); }
+      catch (e) { /* ignore */ }
+    }
+    function populateAliasSelect() {
+      const sel = document.getElementById('aliasSelect');
+      if (!sel) return;
+      // 用 Set 去重 alias
+      const aliases = [...new Set(allKeysCache.map(k => k.alias))];
+      // 重建 options（保留 "__all__"）
+      sel.innerHTML = '<option value="__all__">全部 keys</option>'
+        + aliases.map(a => `<option value="${a}">${a}</option>`).join('');
+      // 恢复选择（如果该 alias 已被删除则回退到 __all__）
+      if (selectedAlias !== '__all__' && !aliases.includes(selectedAlias)) {
+        selectedAlias = '__all__';
+      }
+      sel.value = selectedAlias;
+    }
+    function onAliasChange() {
+      const sel = document.getElementById('aliasSelect');
+      if (!sel) return;
+      selectedAlias = sel.value;
+      saveSelectedAlias();
+      // 切换 main 的 single-alias class 决定 trend-box 位置
+      document.querySelector('main')?.classList.toggle(
+        'single-alias', selectedAlias !== '__all__');
+      // 立即用缓存数据重渲染（不重新请求 API）
+      const diag = { record_count: lastHistCount, exists: true };
+      rebuildChartFromCache(allRecordsCache);
+      renderCards(visibleKeys(), diag);
+    }
+    function visibleKeys() {
+      if (selectedAlias === '__all__') return allKeysCache;
+      return allKeysCache.filter(k => k.alias === selectedAlias);
+    }
 
     function pad(n) { return n < 10 ? '0' + n : '' + n; }
     function nowStr() {
@@ -1140,6 +1209,12 @@ MOBILE_HTML = """<!doctype html>
         lastHistCount = diagResp.record_count || 0;
         lastErr = '';
 
+        // 缓存全量 keys + 填充切换器
+        allKeysCache = keysResp.keys || [];
+        allRecordsCache = histResp.records || [];
+        populateAliasSelect();
+
+        // lastSparkData：仍按全量记录累计（sparkline 在卡片内显示，与 alias 过滤独立）
         lastSparkData.clear();
         for (const r of (histResp.records || [])) {
           if (!r.ok || !r.models) continue;
@@ -1153,10 +1228,14 @@ MOBILE_HTML = """<!doctype html>
             }
           }
         }
-        // 先 buildChart（它会重新填充 lastSparkData，从 5h 已用% 数据）
-        buildChart(histResp.records || []);
-        // 再 renderCards 渲染卡片（sparkline 用 lastSparkData）
-        renderCards(keysResp.keys || [], diagResp);
+        // 先 buildChart（按当前 alias 过滤）
+        rebuildChartFromCache(allRecordsCache);
+        // 切换 main 的 single-alias class（cards ≤ 2 时 trend-box 移到底部）
+        const visKeys = visibleKeys();
+        document.querySelector('main')?.classList.toggle(
+          'single-alias', visKeys.length > 0 && visKeys.length <= 2);
+        // 再 renderCards（按当前 alias 过滤）
+        renderCards(visKeys, diagResp);
         const total = [...lastSparkData.values()].reduce((a, v) => a + v.length, 0);
         document.getElementById('chartRange').textContent = total ? `${total} 点` : '—';
         nextRefresh = Date.now() + 60000;
@@ -1167,6 +1246,18 @@ MOBILE_HTML = """<!doctype html>
         lastErr = `${e.name}: ${e.message || String(e)}`;
         if (window.console) console.error('[MinimaxGuard] refresh error', e);
       }
+    }
+    // 用缓存的 histResp.records 重新构建 chart（按当前 alias 过滤）
+    function rebuildChartFromCache(records) {
+      if (!records) {
+        // 没有传 records → 重新请求（仅在 onAliasChange 中通过 refresh 触发的情况）
+        // 这里用 buildChart 直接传全量（不可取），所以从已有 allKeysCache 推导
+        return;
+      }
+      const filtered = (selectedAlias === '__all__')
+        ? records
+        : records.filter(r => r.alias === selectedAlias);
+      buildChart(filtered);
     }
 
     // 捕获整个页面的 JS 错误，显示在 meta 区
@@ -1409,6 +1500,8 @@ MOBILE_HTML = """<!doctype html>
       });
     }
 
+    // 启动前先恢复用户上次选择的 alias（localStorage）
+    loadSelectedAlias();
     refresh();
     updateMeta();
     setInterval(tick, 1000);
