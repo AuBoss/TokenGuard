@@ -1,0 +1,251 @@
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <title>Minimax Token Plan 监控</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+  <style>
+    * { box-sizing: border-box; }
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+           margin: 0; background: #0f172a; color: #e2e8f0; }
+    header { padding: 20px 28px; background: #1e293b; border-bottom: 1px solid #334155; }
+    h1 { margin: 0 0 4px 0; font-size: 20px; color: #38bdf8; }
+    header p { margin: 0; color: #94a3b8; font-size: 13px; }
+    main { padding: 24px; max-width: 1500px; margin: 0 auto; }
+    .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(310px, 1fr)); gap: 16px; margin-bottom: 24px; }
+    .card { background: #1e293b; border: 1px solid #334155; border-radius: 10px; padding: 16px; }
+    .card h3 { margin: 0 0 10px 0; font-size: 14px; color: #38bdf8; display: flex; justify-content: space-between; align-items: center; }
+    .badge { font-size: 11px; padding: 2px 8px; border-radius: 999px; }
+    .badge.ok { background: #064e3b; color: #6ee7b7; }
+    .badge.fail { background: #7f1d1d; color: #fca5a5; }
+    .section { margin-top: 10px; padding-top: 8px; border-top: 1px dashed #334155; }
+    .section-title { font-size: 12px; color: #94a3b8; margin-bottom: 6px; }
+    .row { display: flex; justify-content: space-between; font-size: 13px; margin: 4px 0; }
+    .row span:first-child { color: #94a3b8; }
+    .row span:last-child { color: #f1f5f9; font-weight: 500; }
+    .bar { background: #334155; height: 8px; border-radius: 4px; overflow: hidden; margin-top: 6px; }
+    .bar > div { height: 100%; transition: width 0.4s ease; }
+    .err-msg { color: #fca5a5; font-size: 12px; margin-top: 6px; }
+    .chart-card { background: #1e293b; border: 1px solid #334155; border-radius: 10px; padding: 16px; margin-bottom: 16px; }
+    .chart-card h2 { margin: 0 0 12px 0; font-size: 15px; color: #cbd5e1; }
+    .toolbar { display: flex; gap: 8px; align-items: center; margin-bottom: 12px; flex-wrap: wrap; }
+    .toolbar select, .toolbar button { background: #334155; color: #e2e8f0; border: 1px solid #475569; padding: 6px 10px; border-radius: 6px; font-size: 13px; }
+    .toolbar button { cursor: pointer; }
+    .toolbar button:hover { background: #475569; }
+    canvas { max-height: 320px; }
+    footer { text-align: center; padding: 16px; color: #64748b; font-size: 12px; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Minimax Token Plan 监控</h1>
+    <p>每分钟自动轮询 · 多 key × 多模型对比 · 历史趋势</p>
+  </header>
+  <main>
+    <div class="toolbar">
+      <label>Key：<select id="aliasSelect"><option value="">全部</option></select></label>
+      <label>Model：<select id="modelSelect"><option value="">全部</option></select></label>
+      <label>窗口：
+        <select id="metricSelect">
+          <option value="interval.used">5h 已用</option>
+          <option value="interval.remaining_percent">5h 剩余%</option>
+          <option value="weekly.used">周 已用</option>
+          <option value="weekly.remaining_percent">周 剩余%</option>
+        </select>
+      </label>
+      <button id="refreshBtn">手动刷新</button>
+      <span id="meta" style="color:#94a3b8;font-size:12px;margin-left:auto"></span>
+    </div>
+
+    <div id="cards" class="cards"></div>
+
+    <div class="chart-card">
+      <h2>趋势图</h2>
+      <canvas id="trendChart"></canvas>
+    </div>
+  </main>
+  <footer>数据来源：<code>data/usage.ndjson</code> · 每 30 秒自动刷新</footer>
+
+  <script>
+    const COLORS = ['#38bdf8', '#f472b6', '#fbbf24', '#a78bfa', '#34d399', '#fb7185', '#60a5fa', '#facc15'];
+    let chart;
+
+    async function fetchJSON(url) {
+      const r = await fetch(url);
+      if (!r.ok) throw new Error(url + ' ' + r.status);
+      return r.json();
+    }
+
+    function formatNumber(n) {
+      if (n === null || n === undefined) return '-';
+      if (Number.isInteger(n)) return n.toLocaleString();
+      return Number(n).toLocaleString(undefined, { maximumFractionDigits: 4 });
+    }
+
+    function usedPct(used, total) {
+      if (typeof used === 'number' && typeof total === 'number' && total) {
+        return Math.max(0, Math.min(100, used / total * 100));
+      }
+      return null;
+    }
+
+    function getNested(obj, path) {
+      return path.split('.').reduce((o, k) => (o == null ? undefined : o[k]), obj);
+    }
+
+    function colorByPct(p) {
+      if (p == null) return '#475569';
+      if (p < 60) return '#22c55e';
+      if (p < 85) return '#eab308';
+      return '#ef4444';
+    }
+
+    function renderCards(keys) {
+      const container = document.getElementById('cards');
+      container.innerHTML = '';
+      if (!keys.length) {
+        container.innerHTML = '<div class="card" style="grid-column: 1/-1;color:#94a3b8">暂无数据，请确认 monitor.py 正在运行</div>';
+        return;
+      }
+      keys.forEach((k) => {
+        const ok = k.ok === true;
+        const models = k.models || [];
+        if (!ok && !models.length) {
+          const card = document.createElement('div');
+          card.className = 'card';
+          card.innerHTML = `
+            <h3>${k.alias}
+              <span class="badge ${ok ? 'ok' : 'fail'}">${ok ? '正常' : '异常'}</span>
+            </h3>
+            <div class="err-msg">${(k.error || k.error_msg || '无数据')}</div>
+            <div class="row"><span>更新时间</span><span>${(k.timestamp || '').replace('T', ' ').replace('Z', '')}</span></div>
+          `;
+          container.appendChild(card);
+          return;
+        }
+        models.forEach((m) => {
+          const i = m.interval || {};
+          const w = m.weekly || {};
+          const iRatio = usedPct(i.used, i.total);
+          const wRatio = usedPct(w.used, w.total);
+          const card = document.createElement('div');
+          card.className = 'card';
+          card.innerHTML = `
+            <h3>${k.alias} · <span style="color:#cbd5e1">${m.name || '-'}</span>
+              <span class="badge ${ok ? 'ok' : 'fail'}">${ok ? '正常' : '异常'}</span>
+            </h3>
+            <div class="section">
+              <div class="section-title">5 小时窗口 (剩余 ${i.remaining_percent ?? '?'}%)</div>
+              <div class="row"><span>已用 / 总额</span><span>${formatNumber(i.used)} / ${formatNumber(i.total)}</span></div>
+              <div class="row"><span>重置时间</span><span>${i.end_time || '-'}</span></div>
+              ${iRatio != null ? `<div class="bar"><div style="width:${iRatio.toFixed(1)}%;background:${colorByPct(iRatio)}"></div></div>
+                <div style="font-size:11px;color:#94a3b8;margin-top:4px;text-align:right">已用 ${iRatio.toFixed(1)}%</div>` : ''}
+            </div>
+            <div class="section">
+              <div class="section-title">周窗口 (剩余 ${w.remaining_percent ?? '?'}%)</div>
+              <div class="row"><span>已用 / 总额</span><span>${formatNumber(w.used)} / ${formatNumber(w.total)}</span></div>
+              <div class="row"><span>重置时间</span><span>${w.end_time || '-'}</span></div>
+              ${wRatio != null ? `<div class="bar"><div style="width:${wRatio.toFixed(1)}%;background:${colorByPct(wRatio)}"></div></div>
+                <div style="font-size:11px;color:#94a3b8;margin-top:4px;text-align:right">已用 ${wRatio.toFixed(1)}%</div>` : ''}
+            </div>
+            <div class="row" style="margin-top:8px"><span>更新时间</span><span>${(k.timestamp || '').replace('T', ' ').replace('Z', '')}</span></div>
+          `;
+          container.appendChild(card);
+        });
+      });
+    }
+
+    function buildChart(records, metricPath) {
+      const byKey = new Map();
+      records.forEach((r) => {
+        if (!r.ok) return;
+        (r.models || []).forEach((m) => {
+          const v = getNested(m, metricPath);
+          if (typeof v !== 'number') return;
+          const label = `${r.alias} · ${m.name}`;
+          if (!byKey.has(label)) byKey.set(label, []);
+          byKey.get(label).push({ x: r.timestamp, y: v });
+        });
+      });
+
+      const datasets = [...byKey.entries()].map(([label, points], i) => ({
+        label,
+        data: points,
+        borderColor: COLORS[i % COLORS.length],
+        backgroundColor: COLORS[i % COLORS.length] + '33',
+        tension: 0.25,
+        pointRadius: 2,
+        borderWidth: 2,
+        spanGaps: true,
+      }));
+
+      if (chart) chart.destroy();
+      const ctx = document.getElementById('trendChart').getContext('2d');
+      chart = new Chart(ctx, {
+        type: 'line',
+        data: { datasets },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          interaction: { mode: 'nearest', intersect: false },
+          plugins: { legend: { labels: { color: '#cbd5e1' } } },
+          scales: {
+            x: { type: 'time', time: { tooltipFormat: 'yyyy-MM-dd HH:mm:ss' },
+                 ticks: { color: '#94a3b8' }, grid: { color: '#1e293b' } },
+            y: { ticks: { color: '#94a3b8' }, grid: { color: '#1e293b' } },
+          },
+        },
+      });
+    }
+
+    async function refreshAll() {
+      const alias = document.getElementById('aliasSelect').value;
+      const model = document.getElementById('modelSelect').value;
+      const metric = document.getElementById('metricSelect').value;
+      try {
+        const params = new URLSearchParams();
+        if (alias) params.set('alias', alias);
+        if (model) params.set('model', model);
+        params.set('limit', '2000');
+        const [keysResp, histResp] = await Promise.all([
+          fetchJSON('/api/keys'),
+          fetchJSON('/api/history?' + params.toString()),
+        ]);
+        renderCards(keysResp.keys || []);
+        buildChart(histResp.records || [], metric);
+        document.getElementById('meta').textContent =
+          `共 ${(histResp.records || []).length} 条记录 · ${new Date().toLocaleString()}`;
+
+        // 同步 alias 下拉
+        const aliasSel = document.getElementById('aliasSelect');
+        const knownAliases = new Set((keysResp.keys || []).map((k) => k.alias));
+        if (knownAliases.size && aliasSel.options.length - 1 !== knownAliases.size) {
+          const cur = aliasSel.value;
+          aliasSel.innerHTML = '<option value="">全部</option>' +
+            [...knownAliases].map((a) => `<option value="${a}">${a}</option>`).join('');
+          aliasSel.value = cur;
+        }
+        // 同步 model 下拉
+        const modelSel = document.getElementById('modelSelect');
+        const knownModels = new Set();
+        (keysResp.keys || []).forEach((k) => (k.models || []).forEach((m) => knownModels.add(m.name)));
+        if (knownModels.size && modelSel.options.length - 1 !== knownModels.size) {
+          const cur = modelSel.value;
+          modelSel.innerHTML = '<option value="">全部</option>' +
+            [...knownModels].map((m) => `<option value="${m}">${m}</option>`).join('');
+          modelSel.value = cur;
+        }
+      } catch (e) {
+        document.getElementById('meta').textContent = '加载失败: ' + e.message;
+      }
+    }
+
+    document.getElementById('refreshBtn').onclick = refreshAll;
+    document.getElementById('aliasSelect').onchange = refreshAll;
+    document.getElementById('modelSelect').onchange = refreshAll;
+    document.getElementById('metricSelect').onchange = refreshAll;
+    refreshAll();
+    setInterval(refreshAll, 30000);
+  </script>
+</body>
+</html>
