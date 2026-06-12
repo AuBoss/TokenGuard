@@ -2,18 +2,24 @@
 
 ## 三种打包方式（按推荐度）
 
-### 1. 🥇 Pake（推荐，最简单）
+### 1. 🥇 Pake（推荐，已可用）
 
 **适合**：用户已装 Node.js；愿意手动启动 Node 服务
 
-**步骤**：
-
+**前置**：
 ```bash
 # 一次性
 npm install
 npm install -g pake-cli
 
-# 打包当前平台
+# ⚠️ 必须：自备 512×512 应用图标
+mkdir -p build
+# 将图标放到 build/icon.png（PNG，512×512 透明背景）
+```
+
+**打包当前平台**：
+
+```bash
 ./scripts/pake-build.sh
 
 # 或单独平台
@@ -29,36 +35,34 @@ npm run package:linux   # Linux .deb
 
 **使用流程**：
 1. 用户安装 `.dmg` / `.exe`
-2. **先启动 Node**（监听 127.0.0.1:5060）：
+2. **先启动 Node**（监听 `127.0.0.1:5050`，与 Pake `START_URL` 一致）：
    ```bash
-   ./node dist/index.js --desktop
-   # 输出：OPEN_URL=http://127.0.0.1:5060/mobile/<KEY>/
+   node dist/index.js --desktop
+   # 输出：OPEN_URL=http://127.0.0.1:<随机端口>/mobile/<KEY>/
    ```
 3. 双击 MinimaxGuard 图标 → 打开 webview → 显示监控面板
 
-### 2. 🥈 Tauri（自包含，~5 MB）
+> ⚠️ `scripts/pake-build.sh` 当前 `START_URL` 硬编码 `127.0.0.1:5050`（与 Node `--server` 默认一致），但 `--desktop` 模式实际是**随机端口**。如要让 Pake 真正可用，要么改 Node 用固定端口（`PORT=5050 node dist/index.js --desktop`，仍绑 127.0.0.1），要么改 Pake 脚本读取 `OPEN_URL` 日志动态生成 `START_URL`（未实现）。
+
+### 2. 🥈 Tauri（占位，未完工）
 
 **适合**：要求"双击即用"，不依赖任何外部
 
-**前置**：
+> ⚠️ **当前状态**：`src-tauri/tauri.conf.json` 已写好配置（`productName: "MinimaxGuard"`, `identifier: "com.auboss.tokenguard"`），但 **没有 Rust 源码**（`src/main.rs` 不存在）、**没有图标**（`icons/*.png` 不存在）、**没有编译脚本**（`package.json` 无 `tauri:build`）、**没有 sidecar binary**（`binaries/minimax-guard-node` 不存在）。`README.md` 与本节都按"已完工"写，但实际**不可用**。
+
+若要启用 Tauri，需自行实现：
 ```bash
-# 安装 Rust
+# 安装工具链
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
-# 安装 Tauri CLI
 cargo install tauri-cli
-```
 
-**打包**：
-```bash
-npm run tauri:build
-# → src-tauri/target/release/bundle/dmg/*.dmg
-# → src-tauri/target/release/bundle/nsis/*.exe
-```
+# 补充缺失文件：
+#   src-tauri/src/main.rs       # 启动 Node sidecar + 创建 webview
+#   src-tauri/icons/{32x32,128x128,128x128@2x,icon.icns,icon.ico}.png
+#   src-tauri/binaries/minimax-guard-node  # Node 二进制（侧车）
 
-**特点**：
-- Tauri 主进程启动 Node sidecar binary
-- 完全自包含（无需外部 Node）
-- 启动稍慢（~1s）但零配置
+# 然后才能 npm run tauri:build  # 此脚本当前不存在，需自行添加到 package.json
+```
 
 ### 3. 🥉 PWA（不打包）
 
@@ -68,29 +72,38 @@ iPhone Safari → 分享 → "添加到主屏幕" → 桌面图标 → 全屏体
 
 ## CI/CD 自动发布
 
-详见 `.github/workflows/release.yml`：
-- push tag → 自动构建三平台
-- 产物作为 GitHub Release Assets 上传
+> 计划中（`.github/workflows/release.yml` 尚未提交）：
+> - push tag → 自动构建三平台
+> - 产物作为 GitHub Release Assets 上传
 
-## 文件结构
+## 文件结构（当前实际）
 
 ```
 MinimaxGuard/
 ├── server/              # Node 后端（不变）
-├── templates/           # HTML（mobile.html / desktop.html / settings.html）
-├── public/              # 静态资源
-├── dist/                # TypeScript 编译输出
+├── templates/           # HTML（desktop.html / mobile.html / mobile2.html / settings.html）
+├── public/              # 静态资源（当前为空）
+├── dist/                # TypeScript 编译输出（.gitignore 排除）
 │
-├── pake.config.json     # Pake 配置
+├── pake.config.json     # Pake 配置（icon: build/icon.png）
 ├── scripts/
-│   └── pake-build.sh    # Pake 打包脚本
-├── src-tauri/           # Tauri 项目（高级方案）
-│   ├── tauri.conf.json
-│   ├── src/main.rs
-│   └── icons/
+│   └── pake-build.sh    # Pake 打包脚本（需 build/icon.png）
+├── src-tauri/           # ⚠️ Tauri 占位配置（仅有 tauri.conf.json）
+│   └── tauri.conf.json
 │
-├── build/               # 打包产物
-│   └── icon.png         # 512x512 应用图标
+├── build/               # ⚠️ 需自建 + 放入 icon.png（512×512）
+│   └── icon.png         # Pake 必需
 │
 └── config.example.json
 ```
+
+## 常见问题
+
+**Q: 跑 `pake-build.sh` 直接 `exit 1`？**
+A: 没找到 `build/icon.png`。Pake 必须有图标。`mkdir -p build` 后放入 512×512 PNG。
+
+**Q: 双击 MinimaxGuard.app 提示"无法连接"？**
+A: Node 服务没启动。`--desktop` 模式下 Node 会监听随机端口，请看终端输出的 `OPEN_URL=` 行。考虑改成 `PORT=5050 node dist/index.js --desktop` 固定端口。
+
+**Q: Tauri 怎么编译？**
+A: 当前**不能**。需补全 `src-tauri/src/main.rs`、图标、sidecar binary 三件套，再添加 `tauri:build` 脚本。
