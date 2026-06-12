@@ -70,6 +70,23 @@
     .card-status.ok { color: #4ade80; border: 1px solid #166534; }
     .card-status.fail { color: #f87171; border: 1px solid #7f1d1d; }
 
+    /* alias 容器：1 个 alias = 1 张外卡，内部按 model 堆叠 sub-card */
+    .alias-card { padding: 0; }                 /* padding 由 sub-card 自管，避免双层 */
+    .alias-card > .card-head { padding: 10px 14px 0; margin-bottom: 0; }
+    /* model 子卡：每个 model 一段 */
+    .sub-card { padding: 10px 14px 12px; }
+    .sub-card + .sub-card { border-top: 1px dashed #1a1a1a; }
+    .sub-head { font-size: 10px; color: #888; text-transform: uppercase;
+                letter-spacing: 0.5px; margin-bottom: 4px; font-weight: 600; }
+    /* 紧凑版 sub-card：单行展示次要模型（如 video），去掉大数字/进度条/sparkline */
+    .sub-mini { padding: 7px 14px; display: flex; align-items: baseline;
+                gap: 14px; font-size: 11px; color: #888;
+                font-variant-numeric: tabular-nums; }
+    .sub-mini .sub-head { margin-bottom: 0; flex-shrink: 0; min-width: 56px; }
+    .sub-mini .mini-info { color: #cbd5e1; }
+    .sub-mini .mini-info .pct { font: inherit; min-width: 0; }   /* 覆盖 .pct 大字号 */
+    .sub-mini .mini-sep { color: #444; margin: 0 2px; }
+
     /* 5h 大数字 */
     .big { display: flex; align-items: baseline; gap: 6px; margin: 2px 0 6px; }
     .big .pct { font-size: 28px; font-weight: 700; line-height: 1; font-variant-numeric: tabular-nums; }
@@ -262,8 +279,7 @@
       selectedAlias = sel.value;
       saveSelectedAlias();
       const visKeys = visibleKeys();
-      const visCardCount = visKeys.reduce((n, k) =>
-        n + ((k.models && k.models.length) || (k.error ? 1 : 0)), 0);
+      const visCardCount = visKeys.length;
       applyLayout(visCardCount);
       // 立即用缓存数据重渲染（不重新请求 API）
       const diag = { record_count: lastHistCount, exists: true };
@@ -389,8 +405,7 @@
         rebuildChartFromCache(allRecordsCache);
         // 切换 main 的 single-alias class（cards ≤ 2 时 trend-box 移到底部）
         const visKeys = visibleKeys();
-        const visCardCount = visKeys.reduce((n, k) =>
-          n + ((k.models && k.models.length) || (k.error ? 1 : 0)), 0);
+        const visCardCount = visKeys.length;
         applyLayout(visCardCount);
         // 再 renderCards（按当前 alias 过滤）
         renderCards(visKeys, diagResp);
@@ -457,6 +472,8 @@
             </div>`);
           continue;
         }
+        // 1 alias = 1 张外卡，内部按 model 堆叠 sub-card
+        const subCards = [];
         for (const m of k.models) {
           const interval = m.interval || {};
           const weekly = m.weekly || {};
@@ -478,12 +495,23 @@
           // 计算初始倒计时（render 时显示）
           const iCountdown = formatCountdown(interval.remains_time_seconds);
           const wCountdown = formatCountdown(weekly.remains_time_seconds);
-          cards.push(`
-            <div class="card">
-              <div class="card-head">
-                <div class="card-title">${k.alias}<span class="model">· ${m.name || '-'}</span></div>
-                <span class="card-status ${status}">${statusTxt}</span>
-              </div>
+          const modelName = m.name || '-';
+          // video 等次要模型走单行紧凑版（只显示 5h 字段，不显示周字段）
+          if (modelName === 'video') {
+            subCards.push(`
+              <div class="sub-card sub-mini">
+                <div class="sub-head">${modelName}</div>
+                <span class="mini-info">
+                  <span class="pct ${colorCls(iP)}">5H ${iP == null ? '-' : iP.toFixed(0) + '%'}</span>
+                  <span class="mini-sep">·</span>
+                  <span>5h余 ${iRemain == null ? '-' : iRemain.toLocaleString()}</span>
+                </span>
+              </div>`);
+            continue;
+          }
+          subCards.push(`
+            <div class="sub-card">
+              <div class="sub-head">${modelName}</div>
               <div class="big-row">
                 <div class="big-left">
                   <span class="pct ${colorCls(iP)}">${iP == null ? '-' : iP.toFixed(0) + '%'}</span>
@@ -506,15 +534,20 @@
                 <span class="pct ${colorCls(wP)}">${wP == null ? '-' : wP.toFixed(0) + '%'}</span>
                 <div class="bar"><div class="${bgCls(wP)}" style="width:${wP || 0}%"></div></div>
               </div>
-              <div class="quota-row">
-                <span class="d">5h 余 ${iRemain == null ? '-' : iRemain.toLocaleString()}</span>
-                <span class="d">周余 ${wRemain == null ? '-' : wRemain.toLocaleString()}</span>
-              </div>
               <div class="spark ${sparkColor}">${spark}</div>
             </div>`);
         }
+        // 外层 alias 卡：1 张 = 1 alias
+        cards.push(`
+          <div class="card alias-card">
+            <div class="card-head">
+              <div class="card-title">${k.alias}</div>
+              <span class="card-status ${status}">${statusTxt}</span>
+            </div>
+            ${subCards.join('')}
+          </div>`);
       }
-      // 4 个 card 注入到 #grid（trend-box 是 main 的直接子节点，不在 #grid 内，不会被 innerHTML 清空）
+      // N 个 alias-card 注入到 #grid（trend-box 是 main 的直接子节点，不在 #grid 内，不会被 innerHTML 清空）
       grid.innerHTML = cards.join('');
     }
 
@@ -787,8 +820,7 @@
       if (window.innerWidth === lastInnerWidth) return;  // 只在宽度变化时触发
       lastInnerWidth = window.innerWidth;
       const visKeys = visibleKeys();
-      const visCardCount = visKeys.reduce((n, k) =>
-        n + ((k.models && k.models.length) || (k.error ? 1 : 0)), 0);
+      const visCardCount = visKeys.length;
       applyLayout(visCardCount);
       // 触发 chart 重绘（chart.js 需要在容器尺寸变化后重新计算）
       if (typeof chart !== 'undefined' && chart) {
