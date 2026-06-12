@@ -29,16 +29,18 @@
 ```
 MinimaxGuard/
 ├── server/                     # Node.js + TypeScript 后端
-│   ├── index.ts                # Express 主程序（API + 静态 + WS 升级）
-│   ├── poller.ts               # 60s 后台轮询（EventEmitter）
+│   ├── index.ts                # Express 主程序（API + 静态 + WS + config）
+│   ├── poller.ts               # 60s 后台轮询（EventEmitter，try/finally 防死锁）
 │   ├── store.ts                # NDJSON 数据访问层
 │   ├── utils.ts                # 工具：access key 解析、API 字段映射
-│   ├── ws.ts                   # WebSocket 服务
+│   ├── ws.ts                   # WebSocket 服务（real-time push）
+│   ├── config.ts               # 配置管理（增删 alias，热更新）
 │   └── types.ts                # TypeScript 类型
 ├── templates/                  # HTML 模板
 │   ├── mobile.html             # iPhone 端 SPA（含 <KEY> <BASE_URL> 占位符）
 │   ├── mobile2.html            # 同上，路径 /mobile2 强制 iPhone 重新下载
-│   └── desktop.html            # 桌面端
+│   ├── desktop.html            # 桌面端
+│   └── settings.html           # 配置管理页（增删 alias / token）
 ├── public/                     # 静态资源
 ├── dist/                       # TypeScript 编译输出（被 .gitignore 排除）
 │
@@ -48,17 +50,32 @@ MinimaxGuard/
 │   ├── usage.ndjson
 │   └── access_key              # 32 字符 URL-safe key（chmod 600）
 │
-├── package.json                # Node 依赖
+├── package.json                # Node 依赖 + 打包脚本
 ├── package-lock.json
 ├── tsconfig.json               # strict: true, ES2022
-├── nginx-minimax.conf          # nginx 反代配置片段
-│
-├── app.py                      # v0.0.0 Python 版（保留作回滚）
-├── monitor.py                  # v0.0.0 终端实时面板
-├── start.sh                    # v0.0.0 一键启动（Python）
-├── requirements.txt
+├── pake.config.json            # Pake 桌面打包配置
+├── scripts/
+│   └── pake-build.sh           # Mac/Win/Linux 桌面打包脚本
+├── nginx-minimax.conf          # nginx 反代配置片段（v0.1.x 部署用）
+├── README-PACKAGING.md         # 详细打包文档
 └── README.md
 ```
+
+## 🖥️ 桌面应用（v0.2.0 新增）
+
+支持 Mac/Win/Linux 三平台桌面应用，详见 [README-PACKAGING.md](./README-PACKAGING.md)。
+
+```bash
+# 一行命令打包（需 npm install -g pake-cli）
+./scripts/pake-build.sh
+
+# 或单独平台
+npm run package:mac     # macOS .dmg
+npm run package:win     # Windows .exe
+npm run package:linux   # Linux .deb
+```
+
+桌面应用启动后监听 `127.0.0.1:5060`（**不**暴露公网），用户配置 token 存在本地 `config.json`，数据存本地 `data/`。
 
 ## 🚀 快速开始
 
@@ -261,9 +278,10 @@ journalctl -u minimax-guard-node -f
 | 实时推送 | 60s HTTP 轮询 | **WebSocket** (ws 8.18) |
 | 首次数据延迟 | ≤ 60s | **< 1s**（request_poll）|
 | history 接口体积 | 720 kB/请求 | **~430 B/请求**（view=mobile + gzip）|
-| 部署 | pip + venv | npm + node 20 LTS |
-| Docker 镜像大小 | ~150 MB (python:3.12-slim) | ~50 MB (node:20-alpine，未来) |
-| systemd 单元 | `python monitor.py` | `node dist/index.js` |
+| 部署 | npm + node 20 LTS | npm + node 20 LTS |
+| Docker 镜像大小 | ~50 MB (node:20-alpine) | ~50 MB (node:20-alpine) |
+| systemd 单元 | `node dist/index.js` | `node dist/index.js` |
+| 桌面应用 (v0.2.0) | — | ✅ Pake (Mac/Win/Linux) |
 | 默认端口 | 5050 | 5060（避开 Python 版） |
 
 **数据兼容**：NDJSON 格式不变，可直接复用 v0.0.0 的 `data/usage.ndjson`。

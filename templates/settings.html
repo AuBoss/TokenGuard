@@ -1,0 +1,169 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <title>MinimaxGuard · 设置</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <style>
+    * { box-sizing: border-box; }
+    html, body { background: #000; color: #e5e5e5; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", sans-serif; }
+    body { padding: 24px; max-width: 800px; margin: 0 auto; }
+    h1 { font-size: 18px; font-weight: 600; margin: 0 0 24px; }
+    h2 { font-size: 14px; font-weight: 600; color: #888; margin: 32px 0 12px; text-transform: uppercase; letter-spacing: 0.5px; }
+    .toolbar { display: flex; gap: 8px; margin-bottom: 16px; }
+    button { background: #1a1a1a; color: #e5e5e5; border: 1px solid #2a2a2a; padding: 6px 14px; border-radius: 4px; font: inherit; cursor: pointer; }
+    button:hover { background: #2a2a2a; }
+    button.primary { background: #2563eb; border-color: #2563eb; }
+    button.primary:hover { background: #1d4ed8; }
+    button.danger { background: #7f1d1d; border-color: #7f1d1d; }
+    button.danger:hover { background: #991b1b; }
+    .empty { padding: 40px 0; text-align: center; color: #555; }
+    table { width: 100%; border-collapse: collapse; }
+    td, th { padding: 10px 8px; text-align: left; border-bottom: 1px solid #1a1a1a; }
+    th { color: #888; font-size: 11px; text-transform: uppercase; font-weight: 500; }
+    td { font-size: 13px; }
+    .alias-cell { font-weight: 600; color: #fff; }
+    .token-cell { color: #666; font-family: monospace; font-size: 11px; }
+    .tag { display: inline-block; background: #1a1a1a; color: #888; padding: 1px 6px; border-radius: 3px; font-size: 10px; margin-right: 4px; }
+    .status-ok { color: #4ade80; }
+    .status-fail { color: #f87171; }
+    .status-dis { color: #555; }
+    .modal { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.7); align-items: center; justify-content: center; z-index: 100; }
+    .modal.show { display: flex; }
+    .modal-body { background: #0a0a0a; border: 1px solid #2a2a2a; border-radius: 8px; padding: 20px; width: 400px; }
+    .form-row { margin-bottom: 12px; }
+    .form-row label { display: block; color: #888; font-size: 11px; margin-bottom: 4px; text-transform: uppercase; }
+    .form-row input { width: 100%; background: #000; color: #e5e5e5; border: 1px solid #2a2a2a; padding: 8px 10px; border-radius: 4px; font: inherit; }
+    .form-row input:focus { outline: none; border-color: #2563eb; }
+    .form-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 16px; }
+    .notice { background: #1a1a1a; border-left: 3px solid #facc15; padding: 10px 14px; border-radius: 4px; color: #facc15; font-size: 12px; margin-bottom: 16px; }
+  </style>
+</head>
+<body>
+  <h1>⚙️ MinimaxGuard 设置</h1>
+
+  <div class="notice">
+    💡 配置仅保存在本地 <code>config.json</code>，token 永不上传。关闭窗口即可退出设置。
+  </div>
+
+  <h2>API Keys</h2>
+  <div class="toolbar">
+    <button class="primary" onclick="showAddModal()">+ 添加 alias</button>
+    <button onclick="loadKeys()">🔄 刷新</button>
+    <a href="<BASE_URL>/mobile" style="margin-left:auto; color:#888; text-decoration:none; padding:6px 0;">← 返回监控</a>
+  </div>
+
+  <div id="keysContainer">
+    <div class="empty">加载中...</div>
+  </div>
+
+  <div id="addModal" class="modal">
+    <div class="modal-body">
+      <h2 style="margin:0 0 16px;">添加新 alias</h2>
+      <div class="form-row">
+        <label>Alias（显示名）</label>
+        <input id="newAlias" placeholder="primary" autocomplete="off">
+      </div>
+      <div class="form-row">
+        <label>Bearer Token</label>
+        <input id="newToken" placeholder="sk-cp-..." autocomplete="off">
+      </div>
+      <div class="form-row">
+        <label>Tags（逗号分隔，可选）</label>
+        <input id="newTags" placeholder="production, team-a" autocomplete="off">
+      </div>
+      <div class="form-actions">
+        <button onclick="hideAddModal()">取消</button>
+        <button class="primary" onclick="addKey()">添加</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    async function fetchJSON(url, opts) {
+      const r = await fetch(url, { cache: 'no-store', ...opts, headers: { 'Content-Type': 'application/json', 'X-Access-Key': '<KEY>', ...(opts?.headers || {}) } });
+      if (!r.ok) throw new Error(await r.text());
+      return r.json();
+    }
+
+    async function loadKeys() {
+      const c = document.getElementById('keysContainer');
+      c.innerHTML = '<div class="empty">加载中...</div>';
+      try {
+        const cfg = await fetchJSON('<BASE_URL>/api/config');
+        if (!cfg.keys.length) {
+          c.innerHTML = '<div class="empty">未配置任何 alias。点击「+ 添加 alias」开始。</div>';
+          return;
+        }
+        let html = '<table><thead><tr><th>Alias</th><th>Token</th><th>Tags</th><th>状态</th><th>操作</th></tr></thead><tbody>';
+        for (const k of cfg.keys) {
+          const statusCls = k.enabled === false ? 'status-dis' : 'status-ok';
+          const statusTxt = k.enabled === false ? '已禁用' : '启用';
+          html += `<tr>
+            <td class="alias-cell">${k.alias}</td>
+            <td class="token-cell">${k.token}</td>
+            <td>${(k.tags || []).map(t => `<span class="tag">${t}</span>`).join('')}</td>
+            <td class="${statusCls}">${statusTxt}</td>
+            <td>
+              <button onclick="toggleKey('${k.alias}', ${k.enabled !== false})">${k.enabled === false ? '启用' : '禁用'}</button>
+              <button class="danger" onclick="deleteKey('${k.alias}')">删除</button>
+            </td>
+          </tr>`;
+        }
+        html += '</tbody></table>';
+        c.innerHTML = html;
+      } catch (e) {
+        c.innerHTML = `<div class="empty">加载失败: ${e.message}</div>`;
+      }
+    }
+
+    function showAddModal() { document.getElementById('addModal').classList.add('show'); }
+    function hideAddModal() { document.getElementById('addModal').classList.remove('show'); }
+
+    async function addKey() {
+      const alias = document.getElementById('newAlias').value.trim();
+      const token = document.getElementById('newToken').value.trim();
+      const tagsRaw = document.getElementById('newTags').value.trim();
+      if (!alias || !token) { alert('alias 和 token 必填'); return; }
+      const tags = tagsRaw ? tagsRaw.split(',').map(t => t.trim()).filter(Boolean) : [];
+      try {
+        await fetchJSON('<BASE_URL>/api/config/keys', {
+          method: 'POST',
+          body: JSON.stringify({ alias, token, tags }),
+        });
+        hideAddModal();
+        document.getElementById('newAlias').value = '';
+        document.getElementById('newToken').value = '';
+        document.getElementById('newTags').value = '';
+        loadKeys();
+      } catch (e) {
+        alert('添加失败: ' + e.message);
+      }
+    }
+
+    async function deleteKey(alias) {
+      if (!confirm(`确定删除 alias "${alias}" 吗？`)) return;
+      try {
+        await fetchJSON(`<BASE_URL>/api/config/keys/${alias}`, { method: 'DELETE' });
+        loadKeys();
+      } catch (e) {
+        alert('删除失败: ' + e.message);
+      }
+    }
+
+    async function toggleKey(alias, currentlyEnabled) {
+      try {
+        await fetchJSON(`<BASE_URL>/api/config/keys/${alias}`, {
+          method: 'PUT',
+          body: JSON.stringify({ enabled: !currentlyEnabled }),
+        });
+        loadKeys();
+      } catch (e) {
+        alert('更新失败: ' + e.message);
+      }
+    }
+
+    loadKeys();
+  </script>
+</body>
+</html>

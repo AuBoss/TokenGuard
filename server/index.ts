@@ -16,6 +16,7 @@ import { loadOrCreateAccessKey, simplifyRecord } from './utils.js';
 import { UsageStore } from './store.js';
 import { BackgroundPoller } from './poller.js';
 import { attachWebSocket } from './ws.js';
+import { ConfigManager } from './config.js';
 import type { AppConfig, UsageRecord } from './types.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -80,9 +81,17 @@ function rewritePrefix(req: Request, key: string): void {
 
 // ---- 主程序 ----
 async function main(): Promise<void> {
-  const config = await loadConfig();
+  // ---- 命令行模式 ----
+  // --desktop 模式：桌面 app，绑定 127.0.0.1 随机端口（不暴露公网）
+  const isDesktop = process.argv.includes('--desktop');
+  const isServer = process.argv.includes('--server');
+
+  // 配置管理（支持运行时增删 alias）
+  const configManager = new ConfigManager(CONFIG_PATH);
+  const config = await configManager.load();
   const accessKey = loadOrCreateAccessKey(KEY_FILE);
   console.log(`[init] access key loaded (${accessKey.length} chars)`);
+  console.log(`[init] config: ${config.keys.length} keys, mode=${isDesktop ? 'desktop' : 'server'}`);
 
   // 数据存储
   const store = new UsageStore(DATA_FILE, config.history_limit || 50000);
@@ -97,6 +106,7 @@ async function main(): Promise<void> {
   // Express app
   const app = express();
   app.use(compression());
+  app.use(express.json({ limit: '64kb' }));  // config API 需要 JSON body
   app.use(keyAuthMiddleware(accessKey));
 
   // 健康检查
@@ -233,21 +243,102 @@ async function main(): Promise<void> {
     }
   });
 
+  // 设置页（本地模式配置 alias/token）
+  app.get('/settings', async (req, res) => {
+    try {
+      const html = await fs.readFile(path.join(TEMPLATE_DIR, 'settings.html'), 'utf-8');
+      const baseUrl = `/${accessKey}`;
+      const rendered = html
+        .replace(/<KEY>/g, accessKey)
+        .replace(/<BASE_URL>/g, baseUrl);
+      res.set('Cache-Control', 'no-cache, no-store, must-revalidate');
+      res.type('html').send(rendered);
+    } catch (e) {
+      res.status(500).send(`settings.html not found: ${(e as Error).message}`);
+    }
+  });
+
+  // ---- config 管理 API（仅本地模式）----
+  app.get('/api/config', async (_req, res) => {
+    try {
+      const cfg = await configManager.load();
+      // 隐藏 token 完整内容（前端只显示前 6 位 + ...）
+      const safe = {
+        ...cfg,
+        keys: cfg.keys.map((k) => ({
+          ...k,
+          token: k.token.length > 8 ? k.token.slice(0, 6) + '...' + k.token.slice(-4) : k.token,
+        })),
+      };
+      res.json(safe);
+    } catch (e) {
+      res.status(500).json({ error: (e as Error).message });
+    }
+  });
+
+  app.post('/api/config/keys', async (req, res) => {
+    try {
+      const { alias, token, tags } = req.body || {};
+      if (!alias || !token) {
+        return res.status(400).json({ error: 'alias and token are required' });
+      }
+      const cfg = await configManager.addKey(alias, token, tags || []);
+      poller.updateConfig(cfg);  // 立即生效，无需重启
+      res.json({ ok: true });
+    } catch (e) {
+      res.status(400).json({ error: (e as Error).message });
+    }
+  });
+
+  app.put('/api/config/keys/:alias', async (req, res) => {
+    try {
+      const { alias } = req.params;
+      const patch = req.body || {};
+      const cfg = await configManager.updateKey(alias, patch);
+      poller.updateConfig(cfg);
+      res.json({ ok: true });
+    } catch (e) {
+      res.status(400).json({ error: (e as Error).message });
+    }
+  });
+
+  app.delete('/api/config/keys/:alias', async (req, res) => {
+    try {
+      const { alias } = req.params;
+      const cfg = await configManager.removeKey(alias);
+      poller.updateConfig(cfg);
+      res.json({ ok: true });
+    } catch (e) {
+      res.status(400).json({ error: (e as Error).message });
+    }
+  });
+
   // 404
   app.use((_req, res) => res.status(404).send('Not Found'));
 
   // 启动 HTTP + WebSocket
-  const port = parseInt(process.env.PORT || '5050', 10);
-  const host = process.env.HOST || '127.0.0.1';
+  // --desktop 模式：监听 127.0.0.1 + 端口 0（系统分配随机端口）
+  // --server 模式：监听 HOST:PORT（默认 127.0.0.1:5050）
+  const port = isDesktop
+    ? 0  // 系统分配随机端口
+    : parseInt(process.env.PORT || '5050', 10);
+  const host = isDesktop ? '127.0.0.1' : (process.env.HOST || '127.0.0.1');
   const httpServer = createServer(app);
 
   // 挂载 WebSocket（poller emit('record') → 推送到所有订阅客户端）
   attachWebSocket(httpServer, poller, accessKey);
 
   httpServer.listen(port, host, () => {
-    console.log(`[server] listening on http://${host}:${port}`);
-    console.log(`[server] mobile:   http://${host}:${port}/mobile/${accessKey}/`);
-    console.log(`[server] ws:       ws://${host}:${port}/ws?key=${accessKey}`);
+    const addr = httpServer.address();
+    const actualPort = typeof addr === 'object' && addr ? addr.port : port;
+    console.log(`[server] listening on http://${host}:${actualPort} (mode=${isDesktop ? 'desktop' : 'server'})`);
+    console.log(`[server] mobile:   http://${host}:${actualPort}/mobile/${accessKey}/`);
+    console.log(`[server] ws:       ws://${host}:${actualPort}/ws?key=${accessKey}`);
+
+    if (isDesktop) {
+      // 桌面模式：通过 Pake/Tauri 配置 webview URL
+      console.log(`[server] OPEN_URL=http://${host}:${actualPort}/mobile/${accessKey}/`);
+    }
   });
 
   // 优雅关闭

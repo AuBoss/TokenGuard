@@ -1,16 +1,25 @@
 {
   "name": "minimax-guard",
-  "version": "0.1.0",
-  "description": "Minimax token plan monitor — Node.js + TypeScript rewrite (v0.1.0, was Python/Flask in v0.0.0)",
+  "version": "0.2.0",
+  "description": "Minimax token plan monitor — Node.js + TypeScript + cross-platform desktop app (Pake)",
   "type": "module",
   "main": "dist/index.js",
+  "bin": {
+    "minimax-guard": "dist/index.js"
+  },
   "scripts": {
     "dev": "tsx watch server/index.ts",
     "build": "tsc",
     "start": "node dist/index.js",
+    "start:server": "node dist/index.js --server",
+    "start:desktop": "node dist/index.js --desktop",
     "start:prod": "NODE_ENV=production node dist/index.js",
     "lint": "tsc --noEmit",
-    "clean": "rm -rf dist"
+    "clean": "rm -rf dist",
+    "package:mac": "npm run build && pake build --packager dmg --targets universal",
+    "package:win": "npm run build && pake build --packager nsis --targets x64",
+    "package:linux": "npm run build && pake build --packager deb --targets x64",
+    "package:all": "npm run build && pake build --targets universal,x64"
   },
   "engines": {
     "node": ">=18.0.0"
@@ -37,7 +46,9 @@
     "monitor",
     "token-plan",
     "express",
-    "typescript"
+    "typescript",
+    "pake",
+    "desktop"
   ],
   "license": "MIT"
 }

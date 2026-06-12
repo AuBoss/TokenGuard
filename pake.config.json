@@ -1,0 +1,13 @@
+{
+  "name": "MinimaxGuard",
+  "version": "0.2.0",
+  "description": "Minimax token plan monitor — desktop app",
+  "identifier": "com.auboss.tokenguard",
+  "category": "DeveloperTool",
+  "icon": "build/icon.png",
+  "targets": ["universal"],
+  "scripts": {
+    "build": "npm run build",
+    "postbuild": "node scripts/pake-postbuild.cjs"
+  }
+}

@@ -41,6 +41,12 @@ export class BackgroundPoller extends EventEmitter {
     super();
   }
 
+  /** 动态更新 config（增删 alias 后调用） */
+  updateConfig(newConfig: AppConfig): void {
+    this.config = newConfig;
+    console.log(`[poller] config updated, now ${newConfig.keys.length} keys`);
+  }
+
   /** 启动定时轮询 */
   start(): void {
     if (this.running) return;
